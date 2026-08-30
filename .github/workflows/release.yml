@@ -63,6 +63,12 @@ jobs:
             cp README.md config.example.toml "dist/${package}/"
             tar -C dist -czf "dist/${package}.tar.gz" "$package"
           done
+          package="paperless_${version}_darwin_all"
+          mkdir -p "dist/${package}"
+          cp "dist/paperless_${version}_darwin_arm64/paperless" "dist/${package}/paperless-arm64"
+          cp "dist/paperless_${version}_darwin_amd64/paperless" "dist/${package}/paperless-amd64"
+          cp README.md config.example.toml "dist/${package}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "$package"
           cd dist
           sha256sum *.tar.gz > checksums.txt
 
@@ -88,15 +94,13 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          arm64_sha="$(sha256sum "dist/paperless_${version}_darwin_arm64.tar.gz" | awk '{print $1}')"
-          amd64_sha="$(sha256sum "dist/paperless_${version}_darwin_amd64.tar.gz" | awk '{print $1}')"
+          universal_sha="$(sha256sum "dist/paperless_${version}_darwin_all.tar.gz" | awk '{print $1}')"
           mkdir -p homebrew-tap/Formula
           sed \
             -e "s|@SOURCE_REPOSITORY@|${SOURCE_REPOSITORY}|g" \
             -e "s|@VERSION@|${version}|g" \
             -e "s|@TAG@|${RELEASE_TAG}|g" \
-            -e "s|@ARM64_SHA256@|${arm64_sha}|g" \
-            -e "s|@AMD64_SHA256@|${amd64_sha}|g" \
+            -e "s|@UNIVERSAL_SHA256@|${universal_sha}|g" \
             .github/homebrew/paperless.rb.tmpl > homebrew-tap/Formula/paperless.rb
 
       - name: Publish the formula

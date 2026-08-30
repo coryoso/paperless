@@ -1,19 +1,10 @@
 class Paperless < Formula
   desc "Local-first document intake and filing service for macOS"
   homepage "https://github.com/@SOURCE_REPOSITORY@"
-  version "@VERSION@"
-
-  on_arm do
-    url "https://github.com/@SOURCE_REPOSITORY@/releases/download/@TAG@/paperless_@VERSION@_darwin_arm64.tar.gz"
-    sha256 "@ARM64_SHA256@"
-  end
-
-  on_intel do
-    url "https://github.com/@SOURCE_REPOSITORY@/releases/download/@TAG@/paperless_@VERSION@_darwin_amd64.tar.gz"
-    sha256 "@AMD64_SHA256@"
-  end
-
+  url "https://github.com/@SOURCE_REPOSITORY@/releases/download/@TAG@/paperless_@VERSION@_darwin_all.tar.gz"
+  sha256 "@UNIVERSAL_SHA256@"
   depends_on :macos
+
   depends_on "ollama"
   depends_on "poppler"
   depends_on "qpdf"
@@ -21,7 +12,8 @@ class Paperless < Formula
   depends_on "tesseract-lang"
 
   def install
-    bin.install "paperless"
+    binary = Hardware::CPU.arm? ? "paperless-arm64" : "paperless-amd64"
+    bin.install binary => "paperless"
     etc.install "config.example.toml" => "paperless.toml"
   end
 

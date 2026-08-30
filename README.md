@@ -151,7 +151,7 @@ A LaunchAgent runs in the logged-in user session, which fits Dropbox, Ollama, Fi
 
 ## Homebrew Releases
 
-GitHub releases automatically build native macOS archives for Apple silicon and Intel Macs and update the public personal `homebrew-cornelius-carl` tap. The formula installs the matching native archive directly, so users do not need Go, Bun, or repository credentials.
+GitHub releases automatically build native macOS binaries for Apple silicon and Intel Macs and update the public personal `homebrew-cornelius-carl` tap. The formula selects the matching binary from a checksummed release bundle, so users do not need Go, Bun, or repository credentials.
 
 To publish a version, create a GitHub release whose tag follows semantic versioning, for example `v0.1.0`. The release workflow uploads both macOS archives and updates `Formula/paperless.rb` in the tap. Prereleases receive archives but do not replace the stable Homebrew formula.
 
