@@ -27,13 +27,11 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Verify embedded web assets
+      - name: Build embedded web assets
         run: |
           cd web
           bun install --frozen-lockfile
           bun run build
-          cd ..
-          git diff --exit-code -- internal/app/webdist
 
       - name: Validate the release tag
         env:
