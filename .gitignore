@@ -1,0 +1,22 @@
+.DS_Store
+bin/
+dist/
+web/node_modules/
+/tmp/
+
+# Local runtime state. The service creates these from config.
+/inbox/
+/raw/
+/processing/
+/archive/
+/review/
+/rejected/
+/duplicates/
+/logs/
+/db/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Local operator config may contain private paths.
+config.toml

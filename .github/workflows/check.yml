@@ -1,0 +1,49 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install web dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Test the web app
+        working-directory: web
+        run: bun run test
+
+      - name: Verify embedded web assets
+        run: |
+          cd web
+          bun run build
+          cd ..
+          git diff --exit-code -- internal/app/webdist
+
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l cmd internal)"
+
+      - name: Vet Go code
+        run: go vet ./...
+
+      - name: Test Go code
+        run: go test -short -count=1 ./...

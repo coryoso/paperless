@@ -1,0 +1,60 @@
+[paths]
+inbox = "~/Paperless-Inbox"
+raw = "~/Paperless/raw"
+processing = "~/Paperless/processing"
+archive = "~/Paperless/archive"
+review = "~/Paperless/review"
+rejected = "~/Paperless/rejected"
+duplicates = "~/Paperless/duplicates"
+logs = "~/Paperless/logs"
+state_dir = "~/Library/Application Support/Paperless"
+archive_root = "~/Dropbox/Documents"
+
+[service]
+host = "127.0.0.1"
+port = 8844
+poll_seconds = 5
+file_stability_seconds = 10
+
+[ocr]
+languages = ["deu", "eng"]
+render_dpi = 300
+crop_content = true
+crop_padding_pixels = 30
+min_crop_confidence = 0.75
+
+[llm]
+provider = "ollama"
+endpoint = "http://localhost:11434"
+model = "qwen3.5:9b-q4_K_M"
+enabled = true
+timeout_seconds = 360
+context_tokens = 16384
+reasoning_tokens = 2048
+max_output_tokens = 2048
+keep_alive = "0"
+
+[policy]
+auto_file_min_confidence = 92
+min_approved_examples = 2
+allow_new_top_level_folders = false
+known_folders = []
+discard_document_types = [
+  "receipt",
+  "delivery-receipt",
+  "utility-information",
+  "routine-invoice",
+  "marketing",
+]
+keep_document_types = [
+  "contract",
+  "insurance-policy",
+  "tax-letter",
+  "government-letter",
+  "legal-letter",
+  "medical-document",
+  "bank-document",
+  "identity-document",
+]
+
+[sender_folders]

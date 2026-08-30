@@ -1,0 +1,42 @@
+class Paperless < Formula
+  desc "Local-first document intake and filing service for macOS"
+  homepage "https://github.com/@SOURCE_REPOSITORY@"
+  url "git@github.com:@SOURCE_REPOSITORY@.git",
+      using: :git,
+      tag: "@TAG@",
+      revision: "@REVISION@"
+  version "@VERSION@"
+
+  depends_on "go" => :build
+  depends_on "ollama"
+  depends_on "poppler"
+  depends_on "qpdf"
+  depends_on "tesseract"
+  depends_on "tesseract-lang"
+
+  def fetch
+    system "go", "mod", "download"
+  end
+
+  def install
+    ldflags = "-s -w -X main.version=#{version}"
+    system "go", "build", *std_go_args(ldflags:), "-mod=readonly", "./cmd/paperless"
+    etc.install "config.example.toml" => "paperless.toml"
+  end
+
+  def caveats
+    <<~EOS
+      Create your user configuration and initialize Paperless with:
+        paperless configure
+        paperless init
+
+      To run Paperless as a macOS LaunchAgent:
+        paperless service install
+        paperless service start
+    EOS
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/paperless version")
+  end
+end

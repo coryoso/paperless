@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAP_REPOSITORY: ${{ github.repository_owner }}/homebrew-paperless
+    steps:
+      - name: Check out the released source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Verify embedded web assets
+        run: |
+          cd web
+          bun install --frozen-lockfile
+          bun run build
+          cd ..
+          git diff --exit-code -- internal/app/webdist
+
+      - name: Validate the release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          fi
+
+      - name: Test
+        run: go test -short -count=1 ./...
+
+      - name: Build macOS archives
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          mkdir -p dist
+          for arch in arm64 amd64; do
+            package="paperless_${version}_darwin_${arch}"
+            mkdir -p "dist/${package}"
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=${version}" \
+              -o "dist/${package}/paperless" \
+              ./cmd/paperless
+            cp README.md config.example.toml "dist/${package}/"
+            tar -C dist -czf "dist/${package}.tar.gz" "$package"
+          done
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/checksums.txt --clobber
+
+      - name: Check out the private Homebrew tap
+        if: ${{ !github.event.release.prerelease }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TAP_REPOSITORY }}
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+
+      - name: Update the stable formula
+        if: ${{ !github.event.release.prerelease }}
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          revision="$(git rev-parse HEAD)"
+          mkdir -p homebrew-tap/Formula
+          sed \
+            -e "s|@SOURCE_REPOSITORY@|${SOURCE_REPOSITORY}|g" \
+            -e "s|@VERSION@|${version}|g" \
+            -e "s|@TAG@|${RELEASE_TAG}|g" \
+            -e "s|@REVISION@|${revision}|g" \
+            .github/homebrew/paperless.rb.tmpl > homebrew-tap/Formula/paperless.rb
+
+      - name: Publish the formula
+        if: ${{ !github.event.release.prerelease }}
+        working-directory: homebrew-tap
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/paperless.rb
+          if git diff --cached --quiet; then
+            echo "Formula already matches ${RELEASE_TAG}"
+            exit 0
+          fi
+          git commit -m "paperless ${RELEASE_TAG}"
+          git push

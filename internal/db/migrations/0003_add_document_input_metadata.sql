@@ -1,0 +1,2 @@
+ALTER TABLE jobs ADD COLUMN input_kind TEXT NOT NULL DEFAULT 'scan';
+ALTER TABLE jobs ADD COLUMN text_source TEXT NOT NULL DEFAULT 'ocr';

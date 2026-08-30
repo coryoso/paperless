@@ -1,0 +1,2 @@
+# Bun output can contain intentional trailing spaces inside bundled dependency strings.
+internal/app/webdist/** whitespace=-trailing-space,-space-before-tab
