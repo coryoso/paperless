@@ -162,10 +162,13 @@ brew tap coryoso/homebrew https://github.com/coryoso/homebrew.git
 brew install coryoso/homebrew/paperless
 ```
 
-For the first setup, make sure Ollama is running, initialize the OCR tools and local model, and start Paperless:
+For the first setup, start your existing Ollama app or install its Homebrew service, then initialize the OCR tools and local model and start Paperless:
 
 ```bash
-brew services start ollama # Skip this if the Ollama app is already running.
+# Skip these two lines if the Ollama app is already running.
+brew install ollama
+brew services start ollama
+
 paperless configure
 paperless init
 brew services start coryoso/homebrew/paperless

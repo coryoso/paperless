@@ -5,7 +5,6 @@ class Paperless < Formula
   sha256 "@UNIVERSAL_SHA256@"
   depends_on :macos
 
-  depends_on "ollama"
   depends_on "poppler"
   depends_on "qpdf"
   depends_on "tesseract"
@@ -32,6 +31,8 @@ class Paperless < Formula
       Create your user configuration and initialize Paperless with:
         paperless configure
         paperless init
+
+      Local classification requires a running Ollama app or service.
 
       Start Paperless now and automatically at login with:
         brew services start paperless
