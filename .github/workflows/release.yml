@@ -11,15 +11,15 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      TAP_REPOSITORY: ${{ github.repository_owner }}/homebrew-paperless
+      TAP_REPOSITORY: ${{ github.repository_owner }}/homebrew-cornelius-carl
     steps:
       - name: Check out the released source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -72,9 +72,9 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/checksums.txt --clobber
 
-      - name: Check out the private Homebrew tap
+      - name: Check out the Homebrew tap
         if: ${{ !github.event.release.prerelease }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ env.TAP_REPOSITORY }}
           path: homebrew-tap
@@ -88,13 +88,15 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          revision="$(git rev-parse HEAD)"
+          arm64_sha="$(sha256sum "dist/paperless_${version}_darwin_arm64.tar.gz" | awk '{print $1}')"
+          amd64_sha="$(sha256sum "dist/paperless_${version}_darwin_amd64.tar.gz" | awk '{print $1}')"
           mkdir -p homebrew-tap/Formula
           sed \
             -e "s|@SOURCE_REPOSITORY@|${SOURCE_REPOSITORY}|g" \
             -e "s|@VERSION@|${version}|g" \
             -e "s|@TAG@|${RELEASE_TAG}|g" \
-            -e "s|@REVISION@|${revision}|g" \
+            -e "s|@ARM64_SHA256@|${arm64_sha}|g" \
+            -e "s|@AMD64_SHA256@|${amd64_sha}|g" \
             .github/homebrew/paperless.rb.tmpl > homebrew-tap/Formula/paperless.rb
 
       - name: Publish the formula

@@ -149,18 +149,16 @@ make service-status
 
 A LaunchAgent runs in the logged-in user session, which fits Dropbox, Ollama, Finder-visible files, and home-folder permissions better than a root LaunchDaemon.
 
-## Private Homebrew Releases
+## Homebrew Releases
 
-GitHub releases automatically build native macOS archives for Apple silicon and Intel Macs and update the separate private `homebrew-paperless` tap. The formula builds from the matching private Git tag over SSH, so installing it does not require a GitHub token embedded in the formula.
+GitHub releases automatically build native macOS archives for Apple silicon and Intel Macs and update the public personal `homebrew-cornelius-carl` tap. The formula installs the matching native archive directly, so users do not need Go, Bun, or repository credentials.
 
 To publish a version, create a GitHub release whose tag follows semantic versioning, for example `v0.1.0`. The release workflow uploads both macOS archives and updates `Formula/paperless.rb` in the tap. Prereleases receive archives but do not replace the stable Homebrew formula.
 
-On a Mac whose SSH key can access both private repositories:
+Install Paperless directly from the tap:
 
 ```bash
-GITHUB_USER="$(gh api user --jq .login)"
-brew tap "${GITHUB_USER}/paperless" "git@github.com:${GITHUB_USER}/homebrew-paperless.git"
-brew install "${GITHUB_USER}/paperless/paperless"
+brew install coryoso/cornelius-carl/paperless
 ```
 
 Then configure and start Paperless:
