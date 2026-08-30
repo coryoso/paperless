@@ -115,7 +115,14 @@ jobs:
           git add Formula/paperless.rb
           if git diff --cached --quiet; then
             echo "Formula already matches ${RELEASE_TAG}"
+          else
+            git commit -m "paperless ${RELEASE_TAG}"
+            git push
+          fi
+          tap_tag="paperless-${RELEASE_TAG}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tap_tag}" >/dev/null 2>&1; then
+            echo "Tap tag ${tap_tag} already exists"
             exit 0
           fi
-          git commit -m "paperless ${RELEASE_TAG}"
-          git push
+          git tag -a "$tap_tag" -m "Paperless ${RELEASE_TAG}"
+          git push origin "$tap_tag"
