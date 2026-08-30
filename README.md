@@ -151,30 +151,34 @@ A LaunchAgent runs in the logged-in user session, which fits Dropbox, Ollama, Fi
 
 ## Homebrew Releases
 
-GitHub releases automatically build native macOS binaries for Apple silicon and Intel Macs and update the public personal `homebrew-cornelius-carl` tap. The formula selects the matching binary from a checksummed release bundle, so users do not need Go, Bun, or repository credentials.
+GitHub releases automatically build native macOS binaries for Apple silicon and Intel Macs and update the public `homebrew` repository. The formula selects the matching binary from a checksummed release bundle, so users do not need Go, Bun, or repository credentials.
 
 To publish a version, create a GitHub release whose tag follows semantic versioning, for example `v0.1.0`. The release workflow uploads both macOS archives, updates `Formula/paperless.rb` in the tap, and pushes a matching `paperless-v0.1.0` tap tag. The tap then publishes its own GitHub release. Prereleases receive archives but do not replace the stable Homebrew formula.
 
 Install Paperless directly from the tap:
 
 ```bash
-brew install coryoso/cornelius-carl/paperless
+brew tap coryoso/homebrew https://github.com/coryoso/homebrew.git
+brew install coryoso/homebrew/paperless
 ```
 
-Then configure and start Paperless:
+For the first setup, make sure Ollama is running, initialize the OCR tools and local model, and start Paperless:
 
 ```bash
+brew services start ollama # Skip this if the Ollama app is already running.
 paperless configure
 paperless init
-paperless service install
-paperless service start
+brew services start coryoso/homebrew/paperless
 ```
+
+Paperless starts immediately, restarts if it crashes, and launches again when the macOS user logs in. The dashboard is available at [http://127.0.0.1:8844](http://127.0.0.1:8844).
 
 Upgrade after publishing another release with:
 
 ```bash
 brew update
-brew upgrade paperless
+brew upgrade coryoso/homebrew/paperless
+brew services restart coryoso/homebrew/paperless
 ```
 
 The app repository stores only the deploy key's private half as the encrypted Actions secret `HOMEBREW_TAP_DEPLOY_KEY`. Its public half is a write-enabled deploy key scoped only to the tap repository.

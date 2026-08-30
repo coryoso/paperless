@@ -11,7 +11,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      TAP_REPOSITORY: ${{ github.repository_owner }}/homebrew-cornelius-carl
+      TAP_REPOSITORY: ${{ github.repository_owner }}/homebrew
     steps:
       - name: Check out the released source
         uses: actions/checkout@v6

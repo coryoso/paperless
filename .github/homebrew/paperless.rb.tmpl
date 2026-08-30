@@ -17,15 +17,26 @@ class Paperless < Formula
     etc.install "config.example.toml" => "paperless.toml"
   end
 
+  service do
+    run [opt_bin/"paperless", "run"]
+    run_at_load true
+    keep_alive true
+    process_type :interactive
+    environment_variables PATH: std_service_path_env
+    log_path var/"log/paperless.log"
+    error_log_path var/"log/paperless.error.log"
+  end
+
   def caveats
     <<~EOS
       Create your user configuration and initialize Paperless with:
         paperless configure
         paperless init
 
-      To run Paperless as a macOS LaunchAgent:
-        paperless service install
-        paperless service start
+      Start Paperless now and automatically at login with:
+        brew services start paperless
+
+      The dashboard is available at http://127.0.0.1:8844.
     EOS
   end
 
