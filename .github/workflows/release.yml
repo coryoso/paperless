@@ -89,19 +89,26 @@ jobs:
 
           version="${RELEASE_TAG#v}"
           certificate_path="$RUNNER_TEMP/paperless-developer-id.p12"
+          developer_id_ca_path="$RUNNER_TEMP/DeveloperIDCA.cer"
           keychain_path="$RUNNER_TEMP/paperless-signing.keychain-db"
           keychain_password="$(openssl rand -hex 24)"
           cleanup() {
             security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
-            rm -f "$certificate_path"
+            rm -f "$certificate_path" "$developer_id_ca_path"
           }
           trap cleanup EXIT
 
           printf '%s' "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+          curl --fail --silent --show-error --location \
+            https://www.apple.com/certificateauthority/DeveloperIDCA.cer \
+            --output "$developer_id_ca_path"
+          openssl x509 -inform DER -in "$developer_id_ca_path" -noout -subject | \
+            grep -q 'Developer ID Certification Authority'
           security create-keychain -p "$keychain_password" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "$keychain_password" "$keychain_path"
-          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path" >/dev/null
+          security import "$developer_id_ca_path" -A -t cert -f x509 -k "$keychain_path" >/dev/null
           security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
           security list-keychains -d user -s "$keychain_path"
           identity="$(security find-identity -v -p codesigning "$keychain_path" | awk '/Developer ID Application/ { print $2; exit }')"
@@ -136,6 +143,19 @@ jobs:
               echo "Could not create and verify a timestamped signature for ${binary}." >&2
               exit 1
             fi
+          done
+
+          # Verify again without the temporary keychain. This proves the complete
+          # certificate chain is embedded and the signature works off-runner.
+          cleanup
+          trap - EXIT
+          for binary in \
+            "dist/paperless_${version}_darwin_arm64/paperless" \
+            "dist/paperless_${version}_darwin_amd64/paperless" \
+            "dist/paperless_${version}_darwin_all/paperless-arm64" \
+            "dist/paperless_${version}_darwin_all/paperless-amd64"; do
+            codesign --verify --strict --verbose=2 "$binary"
+            codesign -dvv "$binary" 2>&1 | grep -q '^Authority=Developer ID Application:'
           done
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
@@ -182,6 +202,23 @@ jobs:
           done
           package="paperless_${version}_darwin_all"
           tar -C dist -czf "dist/${package}.tar.gz" "$package"
+
+          verification_root="$RUNNER_TEMP/paperless-release-verification"
+          mkdir -p "$verification_root"
+          for package in \
+            "paperless_${version}_darwin_arm64" \
+            "paperless_${version}_darwin_amd64" \
+            "paperless_${version}_darwin_all"; do
+            mkdir -p "$verification_root/$package"
+            tar -xzf "dist/${package}.tar.gz" -C "$verification_root/$package"
+          done
+          for binary in \
+            "$verification_root/paperless_${version}_darwin_arm64/paperless_${version}_darwin_arm64/paperless" \
+            "$verification_root/paperless_${version}_darwin_amd64/paperless_${version}_darwin_amd64/paperless" \
+            "$verification_root/paperless_${version}_darwin_all/paperless_${version}_darwin_all/paperless-arm64" \
+            "$verification_root/paperless_${version}_darwin_all/paperless_${version}_darwin_all/paperless-amd64"; do
+            codesign --verify --strict --verbose=2 "$binary"
+          done
           cd dist
           shasum -a 256 *.tar.gz > checksums.txt
 
