@@ -103,7 +103,8 @@ jobs:
           security unlock-keychain -p "$keychain_password" "$keychain_path"
           security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
-          identity="$(security find-identity -v -p codesigning "$keychain_path" | awk -F\" '/Developer ID Application/ { print $2; exit }')"
+          security list-keychains -d user -s "$keychain_path"
+          identity="$(security find-identity -v -p codesigning "$keychain_path" | awk '/Developer ID Application/ { print $2; exit }')"
           if [[ -z "$identity" ]]; then
             echo "No Developer ID Application identity was found in the supplied certificate." >&2
             exit 1
@@ -126,8 +127,10 @@ jobs:
                 verified=true
                 break
               fi
-              echo "::warning::Signing attempt ${attempt} failed for ${binary}; retrying Apple's timestamp service."
-              sleep 5
+              if [[ "$attempt" -lt 3 ]]; then
+                echo "::warning::Signing attempt ${attempt} failed for ${binary}; retrying."
+                sleep 5
+              fi
             done
             if [[ "$verified" != "true" ]]; then
               echo "Could not create and verify a timestamped signature for ${binary}." >&2
