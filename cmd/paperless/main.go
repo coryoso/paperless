@@ -51,6 +51,7 @@ func run(args []string) error {
 		inbox := fs.String("inbox", "", "scanner inbox folder")
 		archive := fs.String("archive", "", "base documents directory (local or locally synced)")
 		stateDir := fs.String("state-dir", "", "local state directory")
+		port := fs.Int("port", 0, "dashboard port (default 8844)")
 		if err := fs.Parse(commandArgs); err != nil {
 			return err
 		}
@@ -78,6 +79,9 @@ func run(args []string) error {
 		cfg.Paths.ArchiveRoot = *archive
 		if *stateDir != "" {
 			cfg.Paths.StateDir = *stateDir
+		}
+		if *port != 0 {
+			cfg.Service.Port = *port
 		}
 		path, err := config.WriteDefault(*configPath, cfg, *force)
 		if err != nil {
@@ -134,6 +138,13 @@ func run(args []string) error {
 			return err
 		}
 		fmt.Printf("Created database backup: %s\n", path)
+		return nil
+	case "url":
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			return err
+		}
+		fmt.Println(cfg.DashboardURL())
 		return nil
 	case "process-once":
 		cfg, err := config.Load(*configPath)
@@ -218,10 +229,11 @@ func usage() {
 
 Usage:
   paperless version
-  paperless [--config path] configure [--force] [--base path] [--inbox path] [--archive path] [--state-dir path]
+  paperless [--config path] configure [--force] [--base path] [--inbox path] [--archive path] [--state-dir path] [--port number]
   paperless [--config path] init [--skip-install]
   paperless [--config path] doctor
   paperless [--config path] backup
+  paperless [--config path] url
   paperless [--config path] process-once
   paperless [--config path] dry-run <pdf-or-image>
   paperless [--config path] serve

@@ -206,7 +206,7 @@ func (p *Processor) serve(ctx context.Context) error {
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	slog.Info("dashboard listening", "url", "http://"+addr)
+	slog.Info("dashboard listening", "url", p.cfg.DashboardURL())
 	err := server.ListenAndServe()
 	if err == http.ErrServerClosed {
 		return nil

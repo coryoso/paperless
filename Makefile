@@ -8,14 +8,15 @@ INBOX ?=
 BASE ?=
 ARCHIVE ?=
 STATE_DIR ?=
+PORT ?=
 FORCE ?=
 
-CONFIGURE_FLAGS = $(if $(FORCE),--force) $(if $(BASE),--base "$(BASE)") $(if $(INBOX),--inbox "$(INBOX)") $(if $(ARCHIVE),--archive "$(ARCHIVE)") $(if $(STATE_DIR),--state-dir "$(STATE_DIR)")
+CONFIGURE_FLAGS = $(if $(FORCE),--force) $(if $(BASE),--base "$(BASE)") $(if $(INBOX),--inbox "$(INBOX)") $(if $(ARCHIVE),--archive "$(ARCHIVE)") $(if $(STATE_DIR),--state-dir "$(STATE_DIR)") $(if $(PORT),--port "$(PORT)")
 
 .PHONY: help build web-install web-build web-dev web-test setup configure init init-folders doctor backup run serve open process dry-run model test test-unit test-race acceptance fmt vet check sqlc service-install service-start service-stop service-status
 
 help: ## Show the available commands and optional variables.
-	@awk 'BEGIN {FS = ":.*## "; printf "Paperless local commands\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-17s %s\n", $$1, $$2} END {printf "\nVariables: CONFIG, INBOX, BASE, ARCHIVE, STATE_DIR, FILE, MODEL, FORCE\n"}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "; printf "Paperless local commands\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-17s %s\n", $$1, $$2} END {printf "\nVariables: CONFIG, INBOX, BASE, ARCHIVE, STATE_DIR, PORT, FILE, MODEL, FORCE\n"}' $(MAKEFILE_LIST)
 
 build: web-build ## Build the React client and compile the single Paperless binary.
 	@mkdir -p "$(dir $(BINARY))"
@@ -63,8 +64,8 @@ run: build ## Run the inbox watcher and dashboard together. Pass INBOX for a tem
 serve: build ## Run only the dashboard, without watching the inbox.
 	"$(BINARY)" --config "$(CONFIG)" serve
 
-open: ## Open the local dashboard in the default browser.
-	open http://127.0.0.1:8844
+open: build ## Open the configured local dashboard in the default browser.
+	open "$$($(BINARY) --config "$(CONFIG)" url)"
 
 process: build ## Process one pass of the configured inbox and exit.
 	"$(BINARY)" --config "$(CONFIG)" process-once

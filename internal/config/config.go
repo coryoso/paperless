@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -192,6 +194,9 @@ func (c Config) Resolve() (Config, error) {
 	if c.Service.Port == 0 {
 		c.Service.Port = 8844
 	}
+	if c.Service.Port < 1 || c.Service.Port > 65535 {
+		return Config{}, fmt.Errorf("service port must be between 1 and 65535")
+	}
 	if c.Service.PollSeconds == 0 {
 		c.Service.PollSeconds = 5
 	}
@@ -229,6 +234,17 @@ func (c Config) Resolve() (Config, error) {
 		c.LLM.KeepAlive = "0"
 	}
 	return c, nil
+}
+
+// DashboardURL returns the browser-facing URL for the configured service.
+// Wildcard bind addresses are replaced with loopback because they are not
+// useful destinations for a local browser.
+func (c Config) DashboardURL() string {
+	host := strings.TrimSpace(c.Service.Host)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(c.Service.Port))
 }
 
 func (c Config) DBPath() string {

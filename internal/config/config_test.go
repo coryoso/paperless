@@ -13,6 +13,30 @@ func TestDefaultRequiresDocumentsDirectorySelection(t *testing.T) {
 	}
 }
 
+func TestDashboardURLUsesConfiguredAddress(t *testing.T) {
+	cfg := Default()
+	if got := cfg.DashboardURL(); got != "http://127.0.0.1:8844" {
+		t.Fatalf("default dashboard URL = %q", got)
+	}
+	cfg.Service.Host = "localhost"
+	cfg.Service.Port = 9988
+	if got := cfg.DashboardURL(); got != "http://localhost:9988" {
+		t.Fatalf("configured dashboard URL = %q", got)
+	}
+	cfg.Service.Host = "::"
+	if got := cfg.DashboardURL(); got != "http://127.0.0.1:9988" {
+		t.Fatalf("wildcard dashboard URL = %q", got)
+	}
+}
+
+func TestResolveRejectsInvalidServicePort(t *testing.T) {
+	cfg := Default()
+	cfg.Service.Port = 65536
+	if _, err := cfg.Resolve(); err == nil || !strings.Contains(err.Error(), "service port") {
+		t.Fatalf("Resolve() error = %v, want invalid service port", err)
+	}
+}
+
 func TestWriteAtomicallyPersistsPrivateConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.toml")
 	cfg := Default()
