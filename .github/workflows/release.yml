@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     env:
       TAP_REPOSITORY: ${{ github.repository_owner }}/homebrew
     steps:
@@ -45,7 +45,7 @@ jobs:
       - name: Test
         run: go test -short -count=1 ./...
 
-      - name: Build macOS archives
+      - name: Build macOS binaries
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
@@ -61,16 +61,126 @@ jobs:
               -o "dist/${package}/paperless" \
               ./cmd/paperless
             cp README.md config.example.toml "dist/${package}/"
-            tar -C dist -czf "dist/${package}.tar.gz" "$package"
           done
           package="paperless_${version}_darwin_all"
           mkdir -p "dist/${package}"
           cp "dist/paperless_${version}_darwin_arm64/paperless" "dist/${package}/paperless-arm64"
           cp "dist/paperless_${version}_darwin_amd64/paperless" "dist/${package}/paperless-amd64"
           cp README.md config.example.toml "dist/${package}/"
+
+      - name: Sign macOS binaries
+        id: signing
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          REQUIRE_APPLE_SIGNING: ${{ vars.REQUIRE_APPLE_SIGNING }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$APPLE_CERTIFICATE_BASE64" || -z "$APPLE_CERTIFICATE_PASSWORD" ]]; then
+            if [[ "$REQUIRE_APPLE_SIGNING" == "true" ]]; then
+              echo "Apple signing is required, but the certificate or its password is missing." >&2
+              exit 1
+            fi
+            echo "::warning::Developer ID secrets are missing; publishing unsigned archives. See docs/CODE_SIGNING.md."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          version="${RELEASE_TAG#v}"
+          certificate_path="$RUNNER_TEMP/paperless-developer-id.p12"
+          keychain_path="$RUNNER_TEMP/paperless-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          cleanup() {
+            security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
+            rm -f "$certificate_path"
+          }
+          trap cleanup EXIT
+
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+          identity="$(security find-identity -v -p codesigning "$keychain_path" | awk -F\" '/Developer ID Application/ { print $2; exit }')"
+          if [[ -z "$identity" ]]; then
+            echo "No Developer ID Application identity was found in the supplied certificate." >&2
+            exit 1
+          fi
+
+          for binary in \
+            "dist/paperless_${version}_darwin_arm64/paperless" \
+            "dist/paperless_${version}_darwin_amd64/paperless" \
+            "dist/paperless_${version}_darwin_all/paperless-arm64" \
+            "dist/paperless_${version}_darwin_all/paperless-amd64"; do
+            verified=false
+            for attempt in 1 2 3; do
+              if codesign --force --options runtime --timestamp \
+                --identifier com.coryoso.paperless \
+                --keychain "$keychain_path" \
+                --sign "$identity" \
+                "$binary" && \
+                codesign --verify --strict --verbose=2 "$binary" && \
+                codesign -dvv "$binary" 2>&1 | grep -q '^Timestamp='; then
+                verified=true
+                break
+              fi
+              echo "::warning::Signing attempt ${attempt} failed for ${binary}; retrying Apple's timestamp service."
+              sleep 5
+            done
+            if [[ "$verified" != "true" ]]; then
+              echo "Could not create and verify a timestamped signature for ${binary}." >&2
+              exit 1
+            fi
+          done
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Notarize signed macOS binaries
+        if: ${{ steps.signing.outputs.signed == 'true' }}
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          REQUIRE_APPLE_NOTARIZATION: ${{ vars.REQUIRE_APPLE_NOTARIZATION }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$APPLE_NOTARY_KEY_BASE64" || -z "$APPLE_NOTARY_KEY_ID" || -z "$APPLE_NOTARY_ISSUER_ID" ]]; then
+            if [[ "$REQUIRE_APPLE_NOTARIZATION" == "true" ]]; then
+              echo "Apple notarization is required, but one or more notary secrets are missing." >&2
+              exit 1
+            fi
+            echo "::warning::Notary credentials are incomplete; publishing signed but unnotarized archives. See docs/CODE_SIGNING.md."
+            exit 0
+          fi
+          version="${RELEASE_TAG#v}"
+          notary_key_path="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          notarization_archive="dist/paperless-notarization.zip"
+          cleanup() { rm -f "$notary_key_path" "$notarization_archive"; }
+          trap cleanup EXIT
+          printf '%s' "$APPLE_NOTARY_KEY_BASE64" | base64 --decode > "$notary_key_path"
+          ditto -c -k --keepParent "dist/paperless_${version}_darwin_all" "$notarization_archive"
+          xcrun notarytool submit "$notarization_archive" \
+            --key "$notary_key_path" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --wait
+
+      - name: Package macOS archives
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          for arch in arm64 amd64; do
+            package="paperless_${version}_darwin_${arch}"
+            tar -C dist -czf "dist/${package}.tar.gz" "$package"
+          done
+          package="paperless_${version}_darwin_all"
           tar -C dist -czf "dist/${package}.tar.gz" "$package"
           cd dist
-          sha256sum *.tar.gz > checksums.txt
+          shasum -a 256 *.tar.gz > checksums.txt
 
       - name: Upload release assets
         env:
@@ -94,7 +204,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          universal_sha="$(sha256sum "dist/paperless_${version}_darwin_all.tar.gz" | awk '{print $1}')"
+          universal_sha="$(shasum -a 256 "dist/paperless_${version}_darwin_all.tar.gz" | awk '{print $1}')"
           mkdir -p homebrew-tap/Formula
           sed \
             -e "s|@SOURCE_REPOSITORY@|${SOURCE_REPOSITORY}|g" \

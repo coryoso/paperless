@@ -28,16 +28,14 @@ class Paperless < Formula
 
   def caveats
     <<~EOS
-      Create your user configuration and initialize Paperless with:
-        paperless configure
-        paperless init
-
       Local classification requires a running Ollama app or service.
 
       Start Paperless now and automatically at login with:
         brew services start paperless
 
-      The dashboard is available at http://127.0.0.1:8844.
+      Then open http://127.0.0.1:8844, choose your documents folder,
+      and follow the guided scanner sharing setup. Paperless will wait
+      safely without processing documents until setup is complete.
     EOS
   end
 
