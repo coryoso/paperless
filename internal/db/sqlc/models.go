@@ -44,14 +44,23 @@ type Job struct {
 	TextSource             string  `json:"text_source"`
 }
 
+type RecipientProfile struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Scope        string `json:"scope"`
+	Aliases      string `json:"aliases"`
+	FolderPrefix string `json:"folder_prefix"`
+}
+
 type RoutingExample struct {
-	ID           int64   `json:"id"`
-	CreatedAt    string  `json:"created_at"`
-	SourceJobID  string  `json:"source_job_id"`
-	Sender       string  `json:"sender"`
-	DocumentType string  `json:"document_type"`
-	Folder       string  `json:"folder"`
-	Filename     string  `json:"filename"`
-	Weight       float64 `json:"weight"`
-	Recipient    string  `json:"recipient"`
+	ID             int64   `json:"id"`
+	CreatedAt      string  `json:"created_at"`
+	SourceJobID    string  `json:"source_job_id"`
+	Sender         string  `json:"sender"`
+	DocumentType   string  `json:"document_type"`
+	Folder         string  `json:"folder"`
+	Filename       string  `json:"filename"`
+	Weight         float64 `json:"weight"`
+	Recipient      string  `json:"recipient"`
+	RecipientScope string  `json:"recipient_scope"`
 }

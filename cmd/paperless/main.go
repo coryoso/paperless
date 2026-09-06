@@ -49,7 +49,7 @@ func run(args []string) error {
 		force := fs.Bool("force", false, "overwrite existing config")
 		base := fs.String("base", "", "runtime base folder for inbox/raw/processing/archive/review/rejected/duplicates/logs")
 		inbox := fs.String("inbox", "", "scanner inbox folder")
-		archive := fs.String("archive", "", "Dropbox archive root")
+		archive := fs.String("archive", "", "base documents directory (local or locally synced)")
 		stateDir := fs.String("state-dir", "", "local state directory")
 		if err := fs.Parse(commandArgs); err != nil {
 			return err
@@ -68,9 +68,14 @@ func run(args []string) error {
 		if *inbox != "" {
 			cfg.Paths.Inbox = *inbox
 		}
-		if *archive != "" {
-			cfg.Paths.ArchiveRoot = *archive
+		if *archive == "" {
+			selected, err := app.SelectDocumentsDirectory(context.Background())
+			if err != nil {
+				return err
+			}
+			*archive = selected
 		}
+		cfg.Paths.ArchiveRoot = *archive
 		if *stateDir != "" {
 			cfg.Paths.StateDir = *stateDir
 		}
@@ -119,6 +124,17 @@ func run(args []string) error {
 			return errors.New("one or more checks failed")
 		}
 		return nil
+	case "backup":
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			return err
+		}
+		path, err := app.BackupDatabase(context.Background(), cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Created database backup: %s\n", path)
+		return nil
 	case "process-once":
 		cfg, err := config.Load(*configPath)
 		if err != nil {
@@ -154,7 +170,7 @@ func run(args []string) error {
 			return err
 		}
 		return runWithSignals(func(ctx context.Context) error {
-			return app.Serve(ctx, cfg)
+			return app.Serve(ctx, cfg, *configPath)
 		})
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -174,7 +190,7 @@ func run(args []string) error {
 			cfg.Paths.Inbox = abs
 		}
 		return runWithSignals(func(ctx context.Context) error {
-			return app.Run(ctx, cfg)
+			return app.Run(ctx, cfg, *configPath)
 		})
 	case "service":
 		cfg, err := config.Load(*configPath)
@@ -205,6 +221,7 @@ Usage:
   paperless [--config path] configure [--force] [--base path] [--inbox path] [--archive path] [--state-dir path]
   paperless [--config path] init [--skip-install]
   paperless [--config path] doctor
+  paperless [--config path] backup
   paperless [--config path] process-once
   paperless [--config path] dry-run <pdf-or-image>
   paperless [--config path] serve

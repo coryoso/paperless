@@ -26,6 +26,14 @@ export function pickSupportedDocument<T extends UploadCandidate>(files: ArrayLik
   return null;
 }
 
+export function supportedDocuments<T extends UploadCandidate>(files: ArrayLike<T>): T[] {
+  return Array.from(files).filter(isSupportedDocument);
+}
+
+export function isProcessingStatus(status: string): boolean {
+  return ["received", "copying_raw", "processing", "ocr_complete", "classified"].includes(status);
+}
+
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;

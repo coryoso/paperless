@@ -228,6 +228,7 @@ func TestClassifyWithOllamaUsesChatEndpointWithThinking(t *testing.T) {
 		cfg.Policy.KnownFolders,
 		base,
 		nil,
+		RoutingExample{Sender: "finanzamt", Recipient: "alex-example", RecipientScope: "personal", DocumentType: "tax-letter", Folder: "Admin/Tax", Filename: "approved-tax-letter.pdf", Approvals: 2},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -257,6 +258,11 @@ func TestClassifyWithOllamaUsesChatEndpointWithThinking(t *testing.T) {
 	schema := requireSchema(t, structuredRequest.Format)
 	requireSchemaEnum(t, schema, "document_type", "tax-letter")
 	requireSchemaEnum(t, schema, "recipient_type", "household")
+	requireSchemaEnum(t, schema, "recipient_scope", "sole_proprietor")
+	requireRequiredField(t, schema, "recipient_evidence")
+	if !strings.Contains(reasoningRequest.Messages[0].Content, "approved-tax-letter.pdf") || !strings.Contains(reasoningRequest.Messages[0].Content, `"recipient_scope":"personal"`) {
+		t.Fatal("approved examples with recipient capacity were not supplied to the model")
+	}
 	requireSchemaEnum(t, schema, "suggested_folder", "Admin/Tax")
 	requireRequiredField(t, schema, "recipient")
 	requireRequiredField(t, schema, "folder_rankings")

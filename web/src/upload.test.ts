@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatFileSize, isSupportedDocument, pickSupportedDocument } from "./upload";
+import { formatFileSize, isProcessingStatus, isSupportedDocument, pickSupportedDocument, supportedDocuments } from "./upload";
 
 describe("upload document selection", () => {
   test("accepts supported MIME types", () => {
@@ -25,6 +25,21 @@ describe("upload document selection", () => {
     ];
     expect(pickSupportedDocument(files)).toEqual(files[1]);
   });
+
+  test("keeps every supported document from a multi-file selection", () => {
+    const files = [
+      { name: "invoice.pdf", type: "application/pdf" },
+      { name: "notes.txt", type: "text/plain" },
+      { name: "receipt.jpg", type: "image/jpeg" },
+    ];
+    expect(supportedDocuments(files)).toEqual([files[0], files[2]]);
+  });
+});
+
+test("identifies statuses that still belong in the processing queue", () => {
+  expect(isProcessingStatus("received")).toBe(true);
+  expect(isProcessingStatus("processing")).toBe(true);
+  expect(isProcessingStatus("needs_review")).toBe(false);
 });
 
 test("formats compact file sizes", () => {

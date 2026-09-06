@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -18,11 +19,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"paperless/internal/classify"
 	"paperless/internal/config"
 	"paperless/internal/db/sqlc"
+	"paperless/internal/ocr"
 	"paperless/internal/progress"
 )
 
@@ -56,18 +59,25 @@ type jobURLs struct {
 }
 
 type dashboardResponse struct {
-	Settings   dashboardSettings `json:"settings"`
-	Stats      dashboardStats    `json:"stats"`
-	Folders    []string          `json:"folders"`
-	ReviewJobs []jobView         `json:"review_jobs"`
-	RecentJobs []jobView         `json:"recent_jobs"`
-	AllJobs    []jobView         `json:"all_jobs"`
+	PaperRecommendations map[string]string         `json:"paper_recommendations"`
+	DatabaseBackup       databaseBackupStatus      `json:"database_backup"`
+	Settings             dashboardSettings         `json:"settings"`
+	Stats                dashboardStats            `json:"stats"`
+	Folders              []string                  `json:"folders"`
+	ReviewJobs           []jobView                 `json:"review_jobs"`
+	RecentJobs           []jobView                 `json:"recent_jobs"`
+	AllJobs              []jobView                 `json:"all_jobs"`
+	RecipientProfiles    []config.RecipientProfile `json:"recipient_profiles"`
+	LearningCount        int64                     `json:"learning_count"`
+	LearningPath         string                    `json:"learning_path"`
 }
 
 type dashboardSettings struct {
 	Inbox               string `json:"inbox"`
 	ArchiveRoot         string `json:"archive_root"`
 	ArchiveExists       bool   `json:"archive_exists"`
+	ArchiveError        string `json:"archive_error"`
+	SetupRequired       bool   `json:"setup_required"`
 	ScannerShareChecked bool   `json:"scanner_share_checked"`
 	ScannerShareReady   bool   `json:"scanner_share_ready"`
 	Model               string `json:"model"`
@@ -97,8 +107,15 @@ type ocrBox struct {
 	Text       string  `json:"text"`
 }
 
-func serveDashboard(ctx context.Context, cfg config.Config) error {
-	processor, cleanup, err := newProcessor(ctx, cfg)
+type uploadWork struct {
+	jobID      string
+	uploadPath string
+	scanTime   time.Time
+	state      *runState
+}
+
+func serveDashboard(ctx context.Context, cfg config.Config, configPath string) error {
+	processor, cleanup, err := newProcessorAtPath(ctx, cfg, configPath)
 	if err != nil {
 		return err
 	}
@@ -106,8 +123,8 @@ func serveDashboard(ctx context.Context, cfg config.Config) error {
 	return processor.serve(ctx)
 }
 
-func runService(ctx context.Context, cfg config.Config) error {
-	processor, cleanup, err := newProcessor(ctx, cfg)
+func runService(ctx context.Context, cfg config.Config, configPath string) error {
+	processor, cleanup, err := newProcessorAtPath(ctx, cfg, configPath)
 	if err != nil {
 		return err
 	}
@@ -116,6 +133,20 @@ func runService(ctx context.Context, cfg config.Config) error {
 	go func() { serverErr <- processor.serve(ctx) }()
 	ticker := time.NewTicker(time.Duration(cfg.Service.PollSeconds) * time.Second)
 	defer ticker.Stop()
+	backupTicker := time.NewTicker(24 * time.Hour)
+	defer backupTicker.Stop()
+	initialBackup := time.After(30 * time.Second)
+	backup := func() {
+		if strings.TrimSpace(cfg.Paths.ArchiveRoot) == "" {
+			return
+		}
+		path, err := processor.backupDatabase(ctx)
+		if err != nil {
+			slog.Warn("database backup failed", "error", err)
+			return
+		}
+		slog.Info("database backup created", "path", path)
+	}
 	slog.Info("paperless service running", "inbox", cfg.Paths.Inbox)
 	for {
 		select {
@@ -123,6 +154,11 @@ func runService(ctx context.Context, cfg config.Config) error {
 			return nil
 		case err := <-serverErr:
 			return err
+		case <-initialBackup:
+			backup()
+			initialBackup = nil
+		case <-backupTicker.C:
+			backup()
 		case <-ticker.C:
 			count, err := processor.ProcessInboxOnce(ctx)
 			if err != nil {
@@ -135,17 +171,26 @@ func runService(ctx context.Context, cfg config.Config) error {
 }
 
 func (p *Processor) serve(ctx context.Context) error {
+	workerCtx, stopWorkers := context.WithCancel(ctx)
+	workersDone := make(chan struct{})
+	go func() { defer close(workersDone); p.processUploadQueue(workerCtx) }()
+	defer func() { stopWorkers(); <-workersDone }()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/dashboard", p.handleDashboardAPI)
 	mux.HandleFunc("GET /api/jobs", p.handleJobsAPI)
 	mux.HandleFunc("GET /api/jobs/{jobID}", p.handleJobAPI)
 	mux.HandleFunc("GET /api/jobs/{jobID}/pages", p.handleJobPagesAPI)
+	mux.HandleFunc("GET /api/jobs/{jobID}/layout", p.handleJobLayoutAPI)
 	mux.HandleFunc("POST /api/uploads", p.handleUploadAPI)
 	mux.HandleFunc("GET /api/uploads/{runID}/events", p.handleRunEvents)
 	mux.HandleFunc("POST /api/jobs/{jobID}/approve", p.handleApproveAPI)
 	mux.HandleFunc("POST /api/jobs/{jobID}/reject", p.handleRejectAPI)
 	mux.HandleFunc("POST /api/jobs/{jobID}/retry", p.handleRetryAPI)
 	mux.HandleFunc("POST /api/folders/refresh", p.handleRefreshFoldersAPI)
+	mux.HandleFunc("POST /api/recipients", p.handleSaveRecipientAPI)
+	mux.HandleFunc("POST /api/backups", p.handleDatabaseBackupAPI)
+	mux.HandleFunc("POST /api/setup/documents-directory", p.handleChooseDocumentsDirectoryAPI)
+	mux.HandleFunc("POST /api/setup/open-sharing-settings", p.handleOpenSharingSettingsAPI)
 	mux.HandleFunc("GET /files/{jobID}/{kind}", p.handleJobFile)
 	mux.HandleFunc("GET /files/{jobID}/pages/{page}/cleaned", p.handleJobPageImage)
 	mux.HandleFunc("GET /", handleWebAsset)
@@ -153,7 +198,10 @@ func (p *Processor) serve(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", p.cfg.Service.Host, p.cfg.Service.Port)
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-workerCtx.Done():
+		case <-p.restart:
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
@@ -192,11 +240,29 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	share := InboxShareStatus(p.cfg.Paths.Inbox)
+	profiles, err := p.store.RecipientProfiles(r.Context())
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	learningCount, err := p.store.Queries.CountRoutingExamples(r.Context())
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	archiveExists, archiveError := archiveDirectoryStatus(p.cfg.Paths.ArchiveRoot)
 	response := dashboardResponse{
+		PaperRecommendations: classify.PaperRecommendations(p.cfg),
+		DatabaseBackup:       databaseBackups(p.cfg.Paths.ArchiveRoot),
+		RecipientProfiles:    profiles,
+		LearningCount:        learningCount,
+		LearningPath:         p.cfg.DBPath(),
 		Settings: dashboardSettings{
 			Inbox:               p.cfg.Paths.Inbox,
 			ArchiveRoot:         p.cfg.Paths.ArchiveRoot,
-			ArchiveExists:       directoryExists(p.cfg.Paths.ArchiveRoot),
+			ArchiveExists:       archiveExists,
+			ArchiveError:        archiveError,
+			SetupRequired:       strings.TrimSpace(p.cfg.Paths.ArchiveRoot) == "",
 			ScannerShareChecked: share.Checked,
 			ScannerShareReady:   share.Shared,
 			Model:               p.cfg.LLM.Model,
@@ -229,6 +295,10 @@ func (p *Processor) handleJobAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(p.cfg.Paths.ArchiveRoot) == "" {
+		writeAPIError(w, errors.New("finish setup by choosing a base documents directory"), http.StatusConflict)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeAPIError(w, err, http.StatusBadRequest)
@@ -270,14 +340,50 @@ func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, closeErr, http.StatusInternalServerError)
 		return
 	}
+	info, err := os.Stat(uploadPath)
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	if err := p.createJob(r.Context(), jobID, uploadPath, info, state.reporter()); err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
 	state.publish(progressEvent("upload", "saved", "Upload stored; document processing queued.", 6))
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-		_, processErr := p.ProcessUploadedFile(ctx, jobID, uploadPath, state.reporter())
-		state.finish(processErr)
-	}()
+	select {
+	case p.uploadQueue <- uploadWork{jobID: jobID, uploadPath: uploadPath, scanTime: info.ModTime(), state: state}:
+	case <-r.Context().Done():
+		writeAPIError(w, r.Context().Err(), http.StatusRequestTimeout)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": runID, "job_id": jobID})
+}
+
+func (p *Processor) processUploadQueue(ctx context.Context) {
+	var workers sync.WaitGroup
+	// One worker can classify while the others perform bounded OCR work.
+	for i := 0; i < ocrWorkerCount(p.cfg)+1; i++ {
+		workers.Add(1)
+		go func() { defer workers.Done(); p.processUploadWorker(ctx) }()
+	}
+	workers.Wait()
+}
+
+func (p *Processor) processUploadWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case work, ok := <-p.uploadQueue:
+			if !ok || ctx.Err() != nil {
+				return
+			}
+			processCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+			processErr := p.processCreatedJob(processCtx, work.jobID, work.uploadPath, work.scanTime, true, work.state.reporter())
+			cancel()
+			work.state.finish(processErr)
+		}
+	}
 }
 
 func (p *Processor) handleRunEvents(w http.ResponseWriter, r *http.Request) {
@@ -335,16 +441,33 @@ func (p *Processor) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 
 func (p *Processor) handleApproveAPI(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Folder                 string `json:"folder"`
-		Filename               string `json:"filename"`
-		DocumentType           string `json:"document_type"`
-		PhysicalOriginalAction string `json:"physical_original_action"`
+		Folder                 string  `json:"folder"`
+		Filename               string  `json:"filename"`
+		DocumentType           string  `json:"document_type"`
+		PhysicalOriginalAction string  `json:"physical_original_action"`
+		RecipientProfileID     *int64  `json:"recipient_profile_id"`
+		Recipient              *string `json:"recipient"`
+		RecipientScope         *string `json:"recipient_scope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeAPIError(w, err, http.StatusBadRequest)
 		return
 	}
-	finalPath, err := p.ApproveJob(r.Context(), r.PathValue("jobID"), input.Folder, input.Filename, input.DocumentType, input.PhysicalOriginalAction)
+	var corrections []RecipientCorrection
+	if input.RecipientProfileID != nil {
+		if *input.RecipientProfileID <= 0 || input.Recipient != nil || input.RecipientScope != nil {
+			writeAPIError(w, errors.New("choose either a saved recipient or a new recipient"), http.StatusBadRequest)
+			return
+		}
+		corrections = append(corrections, RecipientCorrection{ProfileID: *input.RecipientProfileID})
+	} else if input.Recipient != nil || input.RecipientScope != nil {
+		if input.Recipient == nil || input.RecipientScope == nil {
+			writeAPIError(w, errors.New("recipient and capacity must be supplied together"), http.StatusBadRequest)
+			return
+		}
+		corrections = append(corrections, RecipientCorrection{Recipient: *input.Recipient, Scope: *input.RecipientScope})
+	}
+	finalPath, err := p.ApproveJob(r.Context(), r.PathValue("jobID"), input.Folder, input.Filename, input.DocumentType, input.PhysicalOriginalAction, corrections...)
 	if err != nil {
 		writeAPIError(w, err, http.StatusBadRequest)
 		return
@@ -634,4 +757,18 @@ func isSafeID(value string) bool {
 		}
 	}
 	return true
+}
+
+func (p *Processor) handleJobLayoutAPI(w http.ResponseWriter, r *http.Request) {
+	job, err := p.store.Queries.GetJob(r.Context(), r.PathValue("jobID"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	layout, err := ocr.ReadTextLayout(filepath.Join(p.cfg.Paths.Processing, job.ID), job.TextPath, int(job.PageCount))
+	if err != nil {
+		writeAPIError(w, errors.New("document text is not available"), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, layout)
 }

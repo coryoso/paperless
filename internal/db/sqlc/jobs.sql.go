@@ -60,6 +60,36 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 	return err
 }
 
+const deleteJob = `-- name: DeleteJob :exec
+DELETE FROM jobs
+WHERE id = ?
+`
+
+func (q *Queries) DeleteJob(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteJob, id)
+	return err
+}
+
+const deleteJobEvents = `-- name: DeleteJobEvents :exec
+DELETE FROM events
+WHERE job_id = ?
+`
+
+func (q *Queries) DeleteJobEvents(ctx context.Context, jobID string) error {
+	_, err := q.db.ExecContext(ctx, deleteJobEvents, jobID)
+	return err
+}
+
+const deleteJobRoutingExamples = `-- name: DeleteJobRoutingExamples :exec
+DELETE FROM routing_examples
+WHERE source_job_id = ?
+`
+
+func (q *Queries) DeleteJobRoutingExamples(ctx context.Context, sourceJobID string) error {
+	_, err := q.db.ExecContext(ctx, deleteJobRoutingExamples, sourceJobID)
+	return err
+}
+
 const findDuplicateByHash = `-- name: FindDuplicateByHash :one
 SELECT id, source_filename, raw_path, current_path, final_path, text_path, file_hash, text_hash, scan_timestamp, updated_at, status, page_count, summary, classification_json, confidence, physical_original_action, error, duplicate_of, manual_override, input_kind, text_source
 FROM jobs
@@ -243,7 +273,7 @@ func (q *Queries) ListRecentJobs(ctx context.Context, limit int64) ([]Job, error
 const listReviewJobs = `-- name: ListReviewJobs :many
 SELECT id, source_filename, raw_path, current_path, final_path, text_path, file_hash, text_hash, scan_timestamp, updated_at, status, page_count, summary, classification_json, confidence, physical_original_action, error, duplicate_of, manual_override, input_kind, text_source
 FROM jobs
-WHERE status IN ('needs_review', 'failed', 'rejected')
+WHERE status IN ('needs_review', 'failed')
 ORDER BY updated_at DESC
 LIMIT ?
 `
@@ -526,33 +556,6 @@ func (q *Queries) SetRawCopy(ctx context.Context, arg SetRawCopyParams) error {
 		arg.RawPath,
 		arg.FileHash,
 		arg.Status,
-		arg.UpdatedAt,
-		arg.ID,
-	)
-	return err
-}
-
-const setRejected = `-- name: SetRejected :exec
-UPDATE jobs
-SET current_path = ?, status = ?, physical_original_action = ?, manual_override = ?, updated_at = ?
-WHERE id = ?
-`
-
-type SetRejectedParams struct {
-	CurrentPath            string `json:"current_path"`
-	Status                 string `json:"status"`
-	PhysicalOriginalAction string `json:"physical_original_action"`
-	ManualOverride         int64  `json:"manual_override"`
-	UpdatedAt              string `json:"updated_at"`
-	ID                     string `json:"id"`
-}
-
-func (q *Queries) SetRejected(ctx context.Context, arg SetRejectedParams) error {
-	_, err := q.db.ExecContext(ctx, setRejected,
-		arg.CurrentPath,
-		arg.Status,
-		arg.PhysicalOriginalAction,
-		arg.ManualOverride,
 		arg.UpdatedAt,
 		arg.ID,
 	)

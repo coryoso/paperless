@@ -428,3 +428,20 @@ func drawSlopedLine(img *image.RGBA, minX, baseY, maxX int, slope float64, c col
 		fill(img, image.Rect(x, y-1, x+1, y+2), c)
 	}
 }
+
+func TestLetterDeskewFollowsTextInsteadOfScannerEdge(t *testing.T) {
+	for _, skew := range []float64{-1.4, 0, 0.45, 1.6} {
+		t.Run(fmt.Sprintf("%.2f", skew), func(t *testing.T) {
+			img := rotateImage(syntheticTextPage(), skew).(*image.RGBA)
+			drawSlopedLine(img, 30, img.Bounds().Dy()-35, img.Bounds().Dx()-30, math.Tan(-0.8*math.Pi/180), color.RGBA{R: 220, G: 220, B: 220, A: 255})
+			angle := detectSkewAngle(img)
+			if math.Abs(angle+skew) > .2 {
+				t.Fatalf("correction=%.2f for %.2f-degree text", angle, skew)
+			}
+			corrected := rotateImage(img, angle)
+			if residual := detectSkewAngle(corrected); math.Abs(residual) > .2 {
+				t.Fatalf("residual skew=%.2f", residual)
+			}
+		})
+	}
+}

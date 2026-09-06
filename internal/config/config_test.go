@@ -3,8 +3,38 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestDefaultRequiresDocumentsDirectorySelection(t *testing.T) {
+	if got := Default().Paths.ArchiveRoot; got != "" {
+		t.Fatalf("archive root = %q, want empty until setup", got)
+	}
+}
+
+func TestWriteAtomicallyPersistsPrivateConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.toml")
+	cfg := Default()
+	cfg.Paths.ArchiveRoot = filepath.Join(t.TempDir(), "documents")
+	if _, err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "archive_root") {
+		t.Fatalf("config missing archive_root: %s", data)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %o, want 600", info.Mode().Perm())
+	}
+}
 
 func TestEnsureDirsCreatesConfiguredInbox(t *testing.T) {
 	base := t.TempDir()

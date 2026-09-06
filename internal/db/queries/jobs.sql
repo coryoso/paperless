@@ -49,9 +49,16 @@ UPDATE jobs
 SET status = ?, error = ?, physical_original_action = ?, updated_at = ?
 WHERE id = ?;
 
--- name: SetRejected :exec
-UPDATE jobs
-SET current_path = ?, status = ?, physical_original_action = ?, manual_override = ?, updated_at = ?
+-- name: DeleteJobEvents :exec
+DELETE FROM events
+WHERE job_id = ?;
+
+-- name: DeleteJobRoutingExamples :exec
+DELETE FROM routing_examples
+WHERE source_job_id = ?;
+
+-- name: DeleteJob :exec
+DELETE FROM jobs
 WHERE id = ?;
 
 -- name: SetManualArchived :exec
@@ -85,6 +92,6 @@ ORDER BY updated_at DESC;
 -- name: ListReviewJobs :many
 SELECT *
 FROM jobs
-WHERE status IN ('needs_review', 'failed', 'rejected')
+WHERE status IN ('needs_review', 'failed')
 ORDER BY updated_at DESC
 LIMIT ?;

@@ -1,7 +1,9 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -169,6 +171,9 @@ func TestFinalPathStaysInsideArchiveRoot(t *testing.T) {
 	if _, err := processor.finalPath("../outside", "scan.pdf"); err == nil {
 		t.Fatal("expected traversal folder to be rejected")
 	}
+	if _, err := processor.finalPath(filepath.Join(base, "outside"), "scan.pdf"); err == nil {
+		t.Fatal("expected absolute folder to be rejected")
+	}
 	path, err := processor.finalPath("Taxes/2026", "letter.pdf")
 	if err != nil {
 		t.Fatal(err)
@@ -225,6 +230,123 @@ func TestApprovePersistsCorrectedDocumentType(t *testing.T) {
 	}
 	if finalPath != job.FinalPath {
 		t.Fatalf("final path = %q, stored = %q", finalPath, job.FinalPath)
+	}
+}
+
+func TestRejectPermanentlyDeletesJobAndArtifacts(t *testing.T) {
+	base := t.TempDir()
+	cfg := testServerConfig(base)
+	processor, cleanup, err := newProcessor(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	jobID := "0123456789abcdef0123456789abcdef"
+	rawPath := filepath.Join(cfg.Paths.Raw, "20260830-120000__01234567__scan.pdf")
+	processingInput := filepath.Join(cfg.Paths.Processing, filepath.Base(rawPath))
+	workDir := filepath.Join(cfg.Paths.Processing, jobID)
+	textPath := filepath.Join(workDir, "ocr.txt")
+	pagePath := filepath.Join(workDir, "cleaned", "page-0001.png")
+	currentPath := filepath.Join(cfg.Paths.Review, "01234567__scan.pdf")
+	for path, contents := range map[string]string{
+		rawPath:         "raw",
+		processingInput: "processing input",
+		textPath:        "ocr text",
+		pagePath:        "cleaned page",
+		currentPath:     "review pdf",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	now := db.Now()
+	if err := processor.store.Queries.CreateJob(t.Context(), sqlc.CreateJobParams{
+		ID: jobID, SourceFilename: "scan.pdf", CurrentPath: processingInput,
+		ScanTimestamp: now, UpdatedAt: now, Status: StatusReceived,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.store.Queries.SetRawCopy(t.Context(), sqlc.SetRawCopyParams{
+		RawPath: rawPath, FileHash: "hash", Status: StatusCopyingRaw, UpdatedAt: now, ID: jobID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.store.Queries.SetOCRComplete(t.Context(), sqlc.SetOCRCompleteParams{
+		CurrentPath: currentPath, TextPath: textPath, TextHash: "text-hash", PageCount: 1,
+		InputKind: "scan", TextSource: "ocr", Status: StatusOCRComplete, UpdatedAt: now, ID: jobID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.store.Queries.SetNeedsReview(t.Context(), sqlc.SetNeedsReviewParams{
+		CurrentPath: currentPath, Status: StatusNeedsReview, UpdatedAt: now, ID: jobID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := processor.store.Queries.AddEvent(t.Context(), sqlc.AddEventParams{
+		JobID: jobID, CreatedAt: now, Level: "info", Message: "needs review",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := processor.RejectJob(t.Context(), jobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := processor.store.Queries.GetJob(t.Context(), jobID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("job still exists or lookup failed unexpectedly: %v", err)
+	}
+	for _, path := range []string{rawPath, processingInput, textPath, pagePath, currentPath, workDir} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("artifact still exists at %s: %v", path, err)
+		}
+	}
+	var eventCount int
+	if err := processor.store.Conn().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM events WHERE job_id = ?", jobID).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("events still exist for deleted job: %d", eventCount)
+	}
+	reviews, err := processor.store.Queries.ListReviewJobs(t.Context(), 10)
+	if err != nil || len(reviews) != 0 {
+		t.Fatalf("review queue = %#v, err = %v", reviews, err)
+	}
+}
+
+func TestRejectRefusesToDeleteFilesOutsideRuntimeFolders(t *testing.T) {
+	base := t.TempDir()
+	cfg := testServerConfig(filepath.Join(base, "runtime"))
+	processor, cleanup, err := newProcessor(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	outsidePath := filepath.Join(base, "keep.pdf")
+	if err := os.WriteFile(outsidePath, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	jobID := "abcdef0123456789abcdef0123456789"
+	now := db.Now()
+	if err := processor.store.Queries.CreateJob(t.Context(), sqlc.CreateJobParams{
+		ID: jobID, SourceFilename: "keep.pdf", CurrentPath: outsidePath,
+		ScanTimestamp: now, UpdatedAt: now, Status: StatusNeedsReview,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := processor.RejectJob(t.Context(), jobID); err == nil {
+		t.Fatal("expected unsafe artifact path to be rejected")
+	}
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Fatalf("outside file was removed: %v", err)
+	}
+	if _, err := processor.store.Queries.GetJob(t.Context(), jobID); err != nil {
+		t.Fatalf("job should remain after rejected deletion: %v", err)
 	}
 }
 

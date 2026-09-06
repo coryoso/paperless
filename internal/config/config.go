@@ -12,12 +12,21 @@ import (
 )
 
 type Config struct {
-	Paths         Paths             `toml:"paths"`
-	Service       Service           `toml:"service"`
-	OCR           OCR               `toml:"ocr"`
-	LLM           LLM               `toml:"llm"`
-	Policy        Policy            `toml:"policy"`
-	SenderFolders map[string]string `toml:"sender_folders"`
+	Paths             Paths              `toml:"paths"`
+	Service           Service            `toml:"service"`
+	OCR               OCR                `toml:"ocr"`
+	LLM               LLM                `toml:"llm"`
+	Policy            Policy             `toml:"policy"`
+	SenderFolders     map[string]string  `toml:"sender_folders"`
+	RecipientProfiles []RecipientProfile `toml:"recipient_profiles"`
+}
+
+type RecipientProfile struct {
+	ID           int64    `json:"id" toml:"-"`
+	Name         string   `json:"name" toml:"name"`
+	Scope        string   `json:"scope" toml:"scope"`
+	Aliases      []string `json:"aliases" toml:"aliases"`
+	FolderPrefix string   `json:"folder_prefix" toml:"folder_prefix"`
 }
 
 type Paths struct {
@@ -41,6 +50,7 @@ type Service struct {
 }
 
 type OCR struct {
+	Workers           int      `toml:"workers"`
 	Languages         []string `toml:"languages"`
 	RenderDPI         int      `toml:"render_dpi"`
 	CropContent       bool     `toml:"crop_content"`
@@ -77,16 +87,18 @@ func Default() Config {
 	base := filepath.Join(homeDir(), "Paperless")
 	return Config{
 		Paths: Paths{
-			Inbox:       filepath.Join(base, "inbox"),
-			Raw:         filepath.Join(base, "raw"),
-			Processing:  filepath.Join(base, "processing"),
-			Archive:     filepath.Join(base, "archive"),
-			Review:      filepath.Join(base, "review"),
-			Rejected:    filepath.Join(base, "rejected"),
-			Duplicates:  filepath.Join(base, "duplicates"),
-			Logs:        filepath.Join(base, "logs"),
-			StateDir:    filepath.Join(homeDir(), "Library", "Application Support", "Paperless"),
-			ArchiveRoot: defaultArchiveRoot(),
+			Inbox:      filepath.Join(base, "inbox"),
+			Raw:        filepath.Join(base, "raw"),
+			Processing: filepath.Join(base, "processing"),
+			Archive:    filepath.Join(base, "archive"),
+			Review:     filepath.Join(base, "review"),
+			Rejected:   filepath.Join(base, "rejected"),
+			Duplicates: filepath.Join(base, "duplicates"),
+			Logs:       filepath.Join(base, "logs"),
+			StateDir:   filepath.Join(homeDir(), "Library", "Application Support", "Paperless"),
+			// The document root is intentionally unset until the user chooses it.
+			// Cloud-provider folders are valid once they are mounted locally.
+			ArchiveRoot: "",
 		},
 		Service: Service{
 			Host:                 "127.0.0.1",
@@ -95,6 +107,7 @@ func Default() Config {
 			FileStabilitySeconds: 10,
 		},
 		OCR: OCR{
+			Workers:           2,
 			Languages:         []string{"deu", "eng"},
 			RenderDPI:         300,
 			CropContent:       true,
@@ -253,6 +266,16 @@ func WriteDefault(path string, cfg Config, force bool) (string, error) {
 	if _, err := os.Stat(path); err == nil && !force {
 		return "", fmt.Errorf("config already exists: %s", path)
 	}
+	return Write(path, cfg)
+}
+
+// Write atomically replaces a Paperless configuration file. It is used by the
+// guided local setup as well as the command-line configure flow.
+func Write(path string, cfg Config) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		path = DefaultPath()
+	}
+	path = expand(path)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
@@ -264,7 +287,28 @@ func WriteDefault(path string, cfg Config, force bool) (string, error) {
 	if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".paperless-config-*")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -272,6 +316,9 @@ func WriteDefault(path string, cfg Config, force bool) (string, error) {
 
 func expand(path string) string {
 	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
 	if strings.HasPrefix(path, "~/") {
 		path = filepath.Join(homeDir(), path[2:])
 	}
@@ -289,20 +336,4 @@ func homeDir() string {
 		return home
 	}
 	return "."
-}
-
-func defaultArchiveRoot() string {
-	home := homeDir()
-	candidates := []string{
-		filepath.Join(home, "Library", "CloudStorage", "Dropbox", "Dokumente"),
-		filepath.Join(home, "Library", "CloudStorage", "Dropbox", "Documents"),
-		filepath.Join(home, "Dropbox", "Dokumente"),
-		filepath.Join(home, "Dropbox", "Documents"),
-	}
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate
-		}
-	}
-	return candidates[0]
 }

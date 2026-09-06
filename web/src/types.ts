@@ -2,7 +2,12 @@ export type Classification = {
   document_type: string;
   sender: string;
   recipient: string;
+  detected_recipient?: string;
+  recipient_profile_id?: number;
   recipient_type: string;
+  recipient_scope?: string;
+  recipient_evidence?: string;
+  recipient_needs_review?: boolean;
   document_date: string;
   summary: string;
   suggested_folder: string;
@@ -40,10 +45,17 @@ export type Job = {
 };
 
 export type Dashboard = {
+  paper_recommendations?: Record<string, string>;
+  database_backup?: { directory: string; latest: string; count: number; available: boolean };
+  recipient_profiles?: RecipientProfile[];
+  learning_count?: number;
+  learning_path?: string;
   settings: {
     inbox: string;
     archive_root: string;
     archive_exists: boolean;
+    archive_error: string;
+    setup_required: boolean;
     scanner_share_checked: boolean;
     scanner_share_ready: boolean;
     model: string;
@@ -59,6 +71,8 @@ export type Dashboard = {
   recent_jobs: Job[];
   all_jobs: Job[];
 };
+
+export type RecipientProfile = { id: number; name: string; scope: string; aliases: string[]; folder_prefix: string };
 
 export type ProgressEvent = {
   at: string;
@@ -86,3 +100,6 @@ export type OCRPage = {
     text: string;
   }[];
 };
+
+export type TextBlock = { kind: "heading" | "paragraph" | "pre" | "table" | "columns"; text?: string; rows?: string[][]; columns?: TextBlock[][] };
+export type TextLayout = { pages: { page: number; blocks: TextBlock[] }[]; text: string; markdown: string };

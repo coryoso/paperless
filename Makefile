@@ -12,7 +12,7 @@ FORCE ?=
 
 CONFIGURE_FLAGS = $(if $(FORCE),--force) $(if $(BASE),--base "$(BASE)") $(if $(INBOX),--inbox "$(INBOX)") $(if $(ARCHIVE),--archive "$(ARCHIVE)") $(if $(STATE_DIR),--state-dir "$(STATE_DIR)")
 
-.PHONY: help build web-install web-build web-dev web-test setup configure init init-folders doctor run serve open process dry-run model test test-unit test-race acceptance fmt vet check sqlc service-install service-start service-stop service-status
+.PHONY: help build web-install web-build web-dev web-test setup configure init init-folders doctor backup run serve open process dry-run model test test-unit test-race acceptance fmt vet check sqlc service-install service-start service-stop service-status
 
 help: ## Show the available commands and optional variables.
 	@awk 'BEGIN {FS = ":.*## "; printf "Paperless local commands\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-17s %s\n", $$1, $$2} END {printf "\nVariables: CONFIG, INBOX, BASE, ARCHIVE, STATE_DIR, FILE, MODEL, FORCE\n"}' $(MAKEFILE_LIST)
@@ -53,6 +53,9 @@ init-folders: build ## Create folders and the database without installing Homebr
 
 doctor: build ## Check OCR tools, language data, Ollama, model, and configured paths.
 	"$(BINARY)" --config "$(CONFIG)" doctor
+
+backup: build ## Create and validate a SQLite snapshot in the selected documents directory.
+	"$(BINARY)" --config "$(CONFIG)" backup
 
 run: build ## Run the inbox watcher and dashboard together. Pass INBOX for a temporary override.
 	"$(BINARY)" --config "$(CONFIG)" run $(if $(INBOX),--inbox "$(INBOX)")

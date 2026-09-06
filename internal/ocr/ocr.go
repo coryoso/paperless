@@ -25,6 +25,8 @@ import (
 )
 
 type Result struct {
+	Layout        TextLayout   `json:"text_layout"`
+	MarkdownPath  string       `json:"markdown_path"`
 	SearchablePDF string       `json:"searchable_pdf"`
 	TextPath      string       `json:"text_path"`
 	Text          string       `json:"text"`
@@ -175,8 +177,18 @@ func ProcessWithProgress(ctx context.Context, cfg config.Config, inputPath strin
 	if err := os.WriteFile(textPath, []byte(text+"\n"), 0o644); err != nil {
 		return Result{}, err
 	}
+	layout, err := ReadTextLayout(workDir, textPath, len(pagePDFs))
+	if err != nil {
+		return Result{}, err
+	}
+	markdownPath := filepath.Join(workDir, "document.md")
+	if err := os.WriteFile(markdownPath, []byte(layout.Markdown+"\n"), 0o644); err != nil {
+		return Result{}, err
+	}
 	reporter.Info("ocr", "complete", fmt.Sprintf("OCR complete with %d page(s).", len(pagePDFs)), len(pagePDFs), len(pagePDFs), 86)
 	return Result{
+		Layout:        layout,
+		MarkdownPath:  markdownPath,
 		SearchablePDF: outputPDF,
 		TextPath:      textPath,
 		Text:          text,
@@ -326,8 +338,18 @@ func preserveDigitalPDF(inputPath, workDir string, profile nativePDFProfile, rep
 	if err := os.WriteFile(textPath, []byte(text+"\n"), 0o644); err != nil {
 		return Result{}, err
 	}
+	layout, err := ReadTextLayout(workDir, textPath, profile.PageCount)
+	if err != nil {
+		return Result{}, err
+	}
+	markdownPath := filepath.Join(workDir, "document.md")
+	if err := os.WriteFile(markdownPath, []byte(layout.Markdown+"\n"), 0o644); err != nil {
+		return Result{}, err
+	}
 	reporter.Info("ocr", "complete", fmt.Sprintf("Embedded PDF text ready with %d page(s).", profile.PageCount), profile.PageCount, profile.PageCount, 86)
 	return Result{
+		Layout:        layout,
+		MarkdownPath:  markdownPath,
 		SearchablePDF: outputPDF,
 		TextPath:      textPath,
 		Text:          text,
@@ -742,21 +764,21 @@ type skewPoint struct {
 }
 
 func detectSkewAngle(img image.Image) float64 {
-	edgeAngle := detectHorizontalEdgeSkewAngle(img)
-	if math.Abs(edgeAngle) >= 0.15 {
-		return edgeAngle
+	// Align the writing, including an already straight page, before considering
+	// paper or scanner-bed edges. Those edges need not follow the text baseline.
+	bounds := img.Bounds()
+	inset := min(bounds.Dx(), bounds.Dy()) / 30
+	interior := cropImage(img, bounds.Inset(inset))
+	points := collectTextSkewPoints(interior)
+	if len(points) >= 120 {
+		return bestProjectionAngle(interior.Bounds(), points)
 	}
-	points := collectTextSkewPoints(img)
-	textAngle := bestProjectionAngle(img.Bounds(), points)
-	if math.Abs(textAngle) >= 0.15 {
-		return textAngle
-	}
-	points = collectFaintSkewPoints(img)
-	faintAngle := bestProjectionAngle(img.Bounds(), points)
+	points = collectFaintSkewPoints(interior)
+	faintAngle := bestProjectionAngle(interior.Bounds(), points)
 	if math.Abs(faintAngle) >= 0.15 {
 		return faintAngle
 	}
-	return 0
+	return detectHorizontalEdgeSkewAngle(img)
 }
 
 func detectTextSkewAngle(img image.Image) float64 {
@@ -902,8 +924,17 @@ func collectSkewPoints(img image.Image, keep func(luma float64) bool) []skewPoin
 	points := make([]skewPoint, 0, total/(step*step*8))
 	for y := bounds.Min.Y; y < bounds.Max.Y; y += step {
 		for x := bounds.Min.X; x < bounds.Max.X; x += step {
-			if keep(lumaValue(img.At(x, y))) {
-				points = append(points, skewPoint{x: float64(x), y: float64(y)})
+			// Stagger samples within each grid cell. Sampling every nth row at
+			// identical y positions creates artificial horizontal lines and hides
+			// small tilts on high-resolution letter scans.
+			cell := uint32((x-bounds.Min.X)/step)*0x9e3779b9 ^ uint32((y-bounds.Min.Y)/step)*0x85ebca6b
+			cell ^= cell >> 16
+			cell *= 0x7feb352d
+			cell ^= cell >> 15
+			sampleX := min(x+int((cell>>16)%uint32(step)), bounds.Max.X-1)
+			sampleY := min(y+int(cell%uint32(step)), bounds.Max.Y-1)
+			if keep(lumaValue(img.At(sampleX, sampleY))) {
+				points = append(points, skewPoint{x: float64(sampleX), y: float64(sampleY)})
 			}
 		}
 	}
@@ -1055,37 +1086,15 @@ func runTesseract(ctx context.Context, languages string, imagePath string, outpu
 	if dpi <= 0 {
 		dpi = 300
 	}
-	baseArgs := []string{commandImagePath, commandOutputBase, "--dpi", fmt.Sprint(dpi), "-l", languages}
-	for _, run := range []struct {
-		label string
-		args  []string
-	}{
-		{label: "pdf", args: append(append([]string(nil), baseArgs...), "pdf")},
-		{label: "text", args: append([]string(nil), baseArgs...)},
-		{label: "tsv", args: append(append([]string(nil), baseArgs...), "tsv")},
-	} {
-		reporter.Info(
-			"ocr",
-			"tesseract-"+run.label,
-			fmt.Sprintf("Running Tesseract %s pass for page %d of %d.", run.label, page, totalPages),
-			page,
-			totalPages,
-			progress.PercentRange(30, 76, completedUnits, totalUnits),
-		)
-		cmd := exec.CommandContext(ctx, "tesseract", run.args...)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("tesseract %s output failed: %w: %s", run.label, err, strings.TrimSpace(string(output)))
-		}
-		completedUnits++
-		reporter.Info(
-			"ocr",
-			"tesseract-"+run.label,
-			fmt.Sprintf("Finished Tesseract %s pass for page %d of %d.", run.label, page, totalPages),
-			page,
-			totalPages,
-			progress.PercentRange(30, 76, completedUnits, totalUnits),
-		)
+	args := []string{commandImagePath, commandOutputBase, "--dpi", fmt.Sprint(dpi), "-l", languages, "pdf", "txt", "tsv"}
+	reporter.Info("ocr", "tesseract", fmt.Sprintf("Recognizing page %d of %d and generating PDF, text, and word positions together.", page, totalPages), page, totalPages, progress.PercentRange(30, 76, completedUnits, totalUnits))
+	cmd := exec.CommandContext(ctx, "tesseract", args...)
+	// Parallel documents are more efficient than competing OpenMP teams.
+	cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("tesseract output failed: %w: %s", err, strings.TrimSpace(string(output)))
 	}
+	reporter.Info("ocr", "tesseract", fmt.Sprintf("Finished recognition and all outputs for page %d of %d.", page, totalPages), page, totalPages, progress.PercentRange(30, 76, completedUnits+3, totalUnits))
 	return nil
 }
 
@@ -1191,4 +1200,11 @@ func clampFloat(value, min, max float64) float64 {
 		return max
 	}
 	return value
+}
+
+func (r Result) ReadingText() string {
+	if strings.TrimSpace(r.Layout.Text) != "" {
+		return r.Layout.Text
+	}
+	return r.Text
 }

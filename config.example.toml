@@ -8,7 +8,9 @@ rejected = "~/Paperless/rejected"
 duplicates = "~/Paperless/duplicates"
 logs = "~/Paperless/logs"
 state_dir = "~/Library/Application Support/Paperless"
-archive_root = "~/Dropbox/Documents"
+# Required before processing. Choose any existing locally accessible folder,
+# including a folder synced by Dropbox, Google Drive, iCloud Drive, or OneDrive.
+archive_root = ""
 
 [service]
 host = "127.0.0.1"

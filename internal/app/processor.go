@@ -47,9 +47,17 @@ var supportedInputs = map[string]bool{
 }
 
 type Processor struct {
-	cfg   config.Config
-	store *db.Store
-	runs  *runRegistry
+	cfg                   config.Config
+	configPath            string
+	store                 *db.Store
+	runs                  *runRegistry
+	uploadQueue           chan uploadWork
+	restart               chan struct{}
+	directoryChooser      func(context.Context) (string, error)
+	sharingSettingsOpener func(context.Context) error
+	ocrSlots              chan struct{}
+	classificationSlots   chan struct{}
+	processOCR            func(context.Context, config.Config, string, string, progress.Reporter) (ocr.Result, error)
 }
 
 type DryRunResult struct {
@@ -84,6 +92,10 @@ func DryRunFile(ctx context.Context, cfg config.Config, path string) (DryRunResu
 }
 
 func newProcessor(ctx context.Context, cfg config.Config) (*Processor, func(), error) {
+	return newProcessorAtPath(ctx, cfg, config.DefaultPath())
+}
+
+func newProcessorAtPath(ctx context.Context, cfg config.Config, configPath string) (*Processor, func(), error) {
 	if err := cfg.EnsureDirs(); err != nil {
 		return nil, nil, err
 	}
@@ -91,7 +103,19 @@ func newProcessor(ctx context.Context, cfg config.Config) (*Processor, func(), e
 	if err != nil {
 		return nil, nil, err
 	}
-	processor := &Processor{cfg: cfg, store: store, runs: newRunRegistry()}
+	processor := &Processor{
+		cfg:                   cfg,
+		configPath:            configPath,
+		store:                 store,
+		runs:                  newRunRegistry(),
+		uploadQueue:           make(chan uploadWork, 128),
+		restart:               make(chan struct{}, 1),
+		directoryChooser:      chooseDocumentsDirectory,
+		sharingSettingsOpener: openSharingSettings,
+		ocrSlots:              make(chan struct{}, ocrWorkerCount(cfg)),
+		classificationSlots:   make(chan struct{}, 1),
+		processOCR:            ocr.ProcessWithProgress,
+	}
 	if err := processor.syncFolderInventory(ctx); err != nil {
 		store.Close()
 		return nil, nil, err
@@ -100,6 +124,9 @@ func newProcessor(ctx context.Context, cfg config.Config) (*Processor, func(), e
 }
 
 func (p *Processor) ProcessInboxOnce(ctx context.Context) (int, error) {
+	if strings.TrimSpace(p.cfg.Paths.ArchiveRoot) == "" {
+		return 0, nil
+	}
 	paths, err := p.candidateFiles()
 	if err != nil {
 		return 0, err
@@ -137,26 +164,40 @@ func (p *Processor) processFile(ctx context.Context, jobID, inboxPath string, fo
 	if err != nil {
 		return "", err
 	}
+	if err := p.createJob(ctx, jobID, inboxPath, info, reporter); err != nil {
+		return "", err
+	}
+	if err := p.processCreatedJob(ctx, jobID, inboxPath, info.ModTime(), forceReview, reporter); err != nil {
+		return jobID, err
+	}
+	return jobID, nil
+}
+
+func (p *Processor) createJob(ctx context.Context, jobID, inputPath string, info os.FileInfo, reporter progress.Reporter) error {
 	reporter.Info("prepare", "database", "Creating document record.", 0, 0, 8)
 	now := db.Now()
 	if err := p.store.Queries.CreateJob(ctx, sqlc.CreateJobParams{
 		ID:             jobID,
-		SourceFilename: filepath.Base(inboxPath),
-		CurrentPath:    inboxPath,
+		SourceFilename: filepath.Base(inputPath),
+		CurrentPath:    inputPath,
 		ScanTimestamp:  info.ModTime().UTC().Format(time.RFC3339),
 		UpdatedAt:      now,
 		Status:         StatusReceived,
 	}); err != nil {
-		return "", err
+		return err
 	}
 	_ = p.store.Queries.AddEvent(ctx, sqlc.AddEventParams{
-		JobID: jobID, CreatedAt: now, Level: "info", Message: "received " + filepath.Base(inboxPath),
+		JobID: jobID, CreatedAt: now, Level: "info", Message: "received " + filepath.Base(inputPath),
 	})
-	if err := p.processJob(ctx, jobID, inboxPath, info.ModTime(), forceReview, reporter); err != nil {
+	return nil
+}
+
+func (p *Processor) processCreatedJob(ctx context.Context, jobID, inputPath string, scanTime time.Time, forceReview bool, reporter progress.Reporter) error {
+	if err := p.processJob(ctx, jobID, inputPath, scanTime, forceReview, reporter); err != nil {
 		_ = p.failJob(ctx, jobID, err)
-		return jobID, err
+		return err
 	}
-	return jobID, nil
+	return nil
 }
 
 func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, scanTime time.Time, forceReview bool, reporter progress.Reporter) error {
@@ -171,13 +212,9 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	if err != nil {
 		return err
 	}
-	if err := p.store.Queries.SetRawCopy(ctx, sqlc.SetRawCopyParams{
+	duplicate, err := p.store.RegisterRawCopy(ctx, sqlc.SetRawCopyParams{
 		RawPath: rawPath, FileHash: hash, Status: StatusCopyingRaw, UpdatedAt: db.Now(), ID: jobID,
-	}); err != nil {
-		return err
-	}
-
-	duplicate, err := p.store.Queries.FindDuplicateByHash(ctx, sqlc.FindDuplicateByHashParams{FileHash: hash, ID: jobID})
+	})
 	if err == nil && duplicate.ID != "" {
 		duplicatePath := uniquePath(filepath.Join(p.cfg.Paths.Duplicates, timestamp+"__"+jobID[:8]+"__"+sourceName))
 		if err := moveFile(inboxPath, duplicatePath); err != nil {
@@ -208,7 +245,7 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	}
 
 	workDir := filepath.Join(p.cfg.Paths.Processing, jobID)
-	ocrResult, err := ocr.ProcessWithProgress(ctx, p.cfg, processingInput, workDir, reporter)
+	ocrResult, err := p.runOCR(ctx, processingInput, workDir, reporter)
 	if err != nil {
 		return err
 	}
@@ -226,13 +263,18 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 		return err
 	}
 
+	if err := p.waitForClassification(ctx, reporter); err != nil {
+		return err
+	}
+	defer func() { <-p.classificationSlots }()
+
 	folders, err := p.folders(ctx)
 	if err != nil {
 		return err
 	}
 	routingFolders := candidateFolders(ocrResult.Text, folders, 24)
 	reporter.Info("classify", "folders", fmt.Sprintf("Selected %d of %d existing archive folders for routing.", len(routingFolders), len(folders)), len(routingFolders), len(folders), 87)
-	classification := classify.ClassifyWithProgress(ctx, p.cfg, ocrResult.Text, filepath.Base(inboxPath), scanTime, routingFolders, reporter)
+	classification := p.classifyDocument(ctx, ocrResult.ReadingText(), filepath.Base(inboxPath), scanTime, folders, reporter, ocrResult.Layout.Markdown)
 	classificationJSON, _ := json.Marshal(classification)
 	if err := p.store.Queries.SetClassified(ctx, sqlc.SetClassifiedParams{
 		ClassificationJson:     string(classificationJSON),
@@ -307,17 +349,21 @@ func (p *Processor) dryRunFile(ctx context.Context, path string, runID string, r
 		return DryRunResult{}, err
 	}
 	reporter.Info("ocr", "start", "Starting OCR pipeline.", 0, 0, 12)
-	ocrResult, err := ocr.ProcessWithProgress(ctx, p.cfg, inputPath, workDir, reporter)
+	ocrResult, err := p.runOCR(ctx, inputPath, workDir, reporter)
 	if err != nil {
 		return DryRunResult{}, err
 	}
+	if err := p.waitForClassification(ctx, reporter); err != nil {
+		return DryRunResult{}, err
+	}
+	defer func() { <-p.classificationSlots }()
+
 	reporter.Info("classify", "folders", "Loading archive folders for routing.", 0, 0, 87)
 	folders, err := p.folders(ctx)
 	if err != nil {
 		return DryRunResult{}, err
 	}
-	routingFolders := candidateFolders(ocrResult.Text, folders, 24)
-	classification := classify.ClassifyWithProgress(ctx, p.cfg, ocrResult.Text, filepath.Base(path), info.ModTime(), routingFolders, reporter)
+	classification := p.classifyDocument(ctx, ocrResult.ReadingText(), filepath.Base(path), info.ModTime(), folders, reporter, ocrResult.Layout.Markdown)
 	reporter.Info("policy", "evaluate", "Checking auto-file policy.", 0, 0, 97)
 	decision := policy.Evaluate(ctx, p.cfg, p.store.Queries, classification)
 	suggestedPath := classification.SuggestedFilename
@@ -338,10 +384,26 @@ func (p *Processor) dryRunFile(ctx context.Context, path string, runID string, r
 	}, nil
 }
 
-func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, documentType, physicalAction string) (string, error) {
+type RecipientCorrection struct {
+	ProfileID int64  `json:"recipient_profile_id"`
+	Recipient string `json:"recipient"`
+	Scope     string `json:"recipient_scope"`
+}
+
+func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, documentType, physicalAction string, recipient ...RecipientCorrection) (string, error) {
+	folder = strings.TrimSpace(folder)
+	if filepath.IsAbs(folder) {
+		return "", errors.New("folder must be relative to the archive root")
+	}
+	if folder != "" {
+		folder = filepath.ToSlash(filepath.Clean(folder))
+	}
 	job, err := p.store.Queries.GetJob(ctx, jobID)
 	if err != nil {
 		return "", err
+	}
+	if job.Status != StatusNeedsReview {
+		return "", errors.New("only documents awaiting review can be approved")
 	}
 	if folder == "" {
 		return "", errors.New("folder is required")
@@ -350,17 +412,73 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 	if documentType == "" {
 		return "", errors.New("document type is required")
 	}
+	var c classify.Classification
+	_ = json.Unmarshal([]byte(job.ClassificationJson), &c)
+	if c.DetectedRecipient == "" {
+		c.DetectedRecipient = c.Recipient
+	}
+	profiles, err := p.store.RecipientProfiles(ctx)
+	if err != nil {
+		return "", err
+	}
+	var profileID int64
+	var recipientName string
+	if len(recipient) > 0 {
+		correction := recipient[0]
+		if correction.ProfileID != 0 {
+			for _, profile := range profiles {
+				if profile.ID == correction.ProfileID {
+					profileID = profile.ID
+					correction.Recipient, correction.Scope = profile.Name, profile.Scope
+					break
+				}
+			}
+			if profileID == 0 {
+				return "", errors.New("saved recipient no longer exists; choose a recipient again")
+			}
+		}
+		if len(strings.TrimSpace(correction.Recipient)) > 200 {
+			return "", errors.New("recipient name is too long")
+		}
+		recipientName = strings.TrimSpace(correction.Recipient)
+		c.RecipientProfileID = profileID
+		if !classify.ValidRecipientScope(correction.Scope) {
+			return "", errors.New("invalid recipient capacity")
+		}
+		if correction.Scope != "unknown" && strings.TrimSpace(correction.Recipient) == "" {
+			return "", errors.New("recipient name is required for a personal or business capacity")
+		}
+		c.Recipient = classify.Slug(correction.Recipient)
+		c.RecipientScope = correction.Scope
+		c.RecipientNeedsReview = correction.Scope == "unknown"
+		c.RecipientEvidence = "Confirmed during document review"
+		switch correction.Scope {
+		case "personal", "sole_proprietor":
+			c.RecipientType = "person"
+		case "gbr", "organization":
+			c.RecipientType = "company"
+		default:
+			c.RecipientType = "unknown"
+		}
+	}
+	if c.RecipientScope == "" {
+		c.RecipientScope = "unknown"
+		c.RecipientNeedsReview = true
+	}
+	profiles = append(append([]config.RecipientProfile{}, p.cfg.RecipientProfiles...), profiles...)
+	if c.RecipientScope != "unknown" && !classify.FolderFitsRecipient(folder, c, profiles) {
+		return "", errors.New("this folder belongs to a different recipient or capacity; check the recipient or choose another folder")
+	}
 	finalPath, err := p.finalPath(folder, filename)
 	if err != nil {
 		return "", err
 	}
-	var c classify.Classification
-	_ = json.Unmarshal([]byte(job.ClassificationJson), &c)
 	c.DocumentType = documentType
 	c.SuggestedFolder = strings.Trim(folder, "/")
 	c.SuggestedFilename = filepath.Base(finalPath)
-	c.PhysicalOriginalAction = physicalAction
 	c.Sensitive = classify.DocumentTypeSensitive(documentType)
+	physicalAction = classify.PaperRecommendation(p.cfg, documentType)
+	c.PhysicalOriginalAction = physicalAction
 	classificationJSON, err := json.Marshal(c)
 	if err != nil {
 		return "", err
@@ -391,13 +509,17 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 		return "", err
 	}
 	if err := p.store.LearnApproval(ctx, db.Approval{
-		JobID:        jobID,
-		Sender:       c.Sender,
-		Recipient:    c.Recipient,
-		DocumentType: c.DocumentType,
-		Folder:       folder,
-		Filename:     filename,
-		Weight:       1,
+		RecipientProfileID: profileID,
+		RecipientName:      recipientName,
+		DetectedRecipient:  c.DetectedRecipient,
+		JobID:              jobID,
+		Sender:             c.Sender,
+		Recipient:          c.Recipient,
+		RecipientScope:     c.RecipientScope,
+		DocumentType:       c.DocumentType,
+		Folder:             c.SuggestedFolder,
+		Filename:           c.SuggestedFilename,
+		Weight:             1,
 	}); err != nil {
 		return "", err
 	}
@@ -409,20 +531,99 @@ func (p *Processor) RejectJob(ctx context.Context, jobID string) error {
 	if err != nil {
 		return err
 	}
-	rejectedPath := uniquePath(filepath.Join(p.cfg.Paths.Rejected, jobID[:8]+"__"+filepath.Base(job.CurrentPath)))
-	if job.CurrentPath != "" {
-		if err := moveFile(job.CurrentPath, rejectedPath); err != nil {
+	if job.Status != StatusNeedsReview && job.Status != StatusFailed && job.Status != StatusRejected {
+		return fmt.Errorf("only review jobs can be rejected, got status %q", job.Status)
+	}
+
+	files := []jobArtifact{
+		{path: job.CurrentPath, roots: p.jobRuntimeRoots()},
+		{path: job.RawPath, roots: []string{p.cfg.Paths.Raw}},
+		{path: job.TextPath, roots: []string{p.cfg.Paths.Processing}},
+	}
+	if job.RawPath != "" {
+		files = append(files, jobArtifact{
+			path:  filepath.Join(p.cfg.Paths.Processing, filepath.Base(job.RawPath)),
+			roots: []string{p.cfg.Paths.Processing},
+		})
+	}
+	files = append(files, jobArtifact{
+		path:      filepath.Join(p.cfg.Paths.Processing, job.ID),
+		roots:     []string{p.cfg.Paths.Processing},
+		recursive: true,
+	})
+	validatedPaths := make([]string, len(files))
+	for index, artifact := range files {
+		validatedPath, err := validateJobArtifact(artifact)
+		if err != nil {
+			return err
+		}
+		validatedPaths[index] = validatedPath
+	}
+	for index, artifact := range files {
+		if err := removeJobArtifact(validatedPaths[index], artifact.recursive); err != nil {
 			return err
 		}
 	}
-	return p.store.Queries.SetRejected(ctx, sqlc.SetRejectedParams{
-		CurrentPath:            rejectedPath,
-		Status:                 StatusRejected,
-		PhysicalOriginalAction: "review",
-		ManualOverride:         db.BoolInt(true),
-		UpdatedAt:              db.Now(),
-		ID:                     jobID,
-	})
+	return p.store.DeleteJob(ctx, jobID)
+}
+
+type jobArtifact struct {
+	path      string
+	roots     []string
+	recursive bool
+}
+
+func (p *Processor) jobRuntimeRoots() []string {
+	return []string{
+		p.cfg.Paths.Inbox,
+		p.cfg.Paths.Raw,
+		p.cfg.Paths.Processing,
+		p.cfg.Paths.Review,
+		p.cfg.Paths.Rejected,
+		p.cfg.Paths.Duplicates,
+	}
+}
+
+func validateJobArtifact(artifact jobArtifact) (string, error) {
+	if artifact.path == "" {
+		return "", nil
+	}
+	absPath, err := filepath.Abs(artifact.path)
+	if err != nil {
+		return "", err
+	}
+	allowed := false
+	for _, root := range artifact.roots {
+		if root == "" {
+			continue
+		}
+		absRoot, rootErr := filepath.Abs(root)
+		if rootErr != nil {
+			return "", rootErr
+		}
+		rel, relErr := filepath.Rel(absRoot, absPath)
+		if relErr == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return "", fmt.Errorf("refusing to delete job artifact outside runtime folders: %s", artifact.path)
+	}
+	return absPath, nil
+}
+
+func removeJobArtifact(path string, recursive bool) error {
+	if path == "" {
+		return nil
+	}
+	if recursive {
+		return os.RemoveAll(path)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func (p *Processor) retryJob(ctx context.Context, jobID string) (string, error) {
@@ -615,7 +816,10 @@ func (p *Processor) finalPath(folder, filename string) (string, error) {
 	if err != nil || !info.IsDir() {
 		return "", fmt.Errorf("archive root is unavailable: %s", root)
 	}
-	folder = strings.TrimSpace(strings.Trim(folder, "/"))
+	folder = strings.TrimSpace(folder)
+	if filepath.IsAbs(folder) {
+		return "", errors.New("folder must be relative to the archive root")
+	}
 	if folder == "" {
 		return "", errors.New("folder is required")
 	}

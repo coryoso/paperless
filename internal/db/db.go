@@ -37,6 +37,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		conn.Close()
 		return nil, err
 	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("protect sqlite database: %w", err)
+	}
 	store := &Store{conn: conn, Queries: sqlc.New(conn)}
 	if err := store.Migrate(ctx); err != nil {
 		conn.Close()

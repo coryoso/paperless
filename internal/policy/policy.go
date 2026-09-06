@@ -22,6 +22,9 @@ type Counter interface {
 
 func Evaluate(ctx context.Context, cfg config.Config, queries Counter, c classify.Classification) Decision {
 	reasons := []string{}
+	if c.RecipientScope == "" || c.RecipientScope == "unknown" || c.RecipientNeedsReview || c.Recipient == "" {
+		reasons = append(reasons, "recipient identity or personal/business capacity needs review")
+	}
 	if c.PhysicalOriginalAction != "discard_candidate" {
 		reasons = append(reasons, "paper original is not discard-candidate")
 	}
@@ -46,10 +49,11 @@ func Evaluate(ctx context.Context, cfg config.Config, queries Counter, c classif
 	}
 	if cfg.Policy.MinApprovedExamples > 0 && queries != nil && c.SuggestedFolder != "" {
 		count, err := queries.ApprovedExampleCount(ctx, sqlc.ApprovedExampleCountParams{
-			Sender:       c.Sender,
-			Recipient:    c.Recipient,
-			DocumentType: c.DocumentType,
-			Folder:       c.SuggestedFolder,
+			Sender:         c.Sender,
+			Recipient:      c.Recipient,
+			RecipientScope: c.RecipientScope,
+			DocumentType:   c.DocumentType,
+			Folder:         c.SuggestedFolder,
 		})
 		if err != nil && err != sql.ErrNoRows {
 			reasons = append(reasons, "could not check learned examples")

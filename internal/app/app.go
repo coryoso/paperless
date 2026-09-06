@@ -104,10 +104,10 @@ func exists(path string) bool {
 	return err == nil
 }
 
-func Serve(ctx context.Context, cfg config.Config) error {
-	return serveDashboard(ctx, cfg)
+func Serve(ctx context.Context, cfg config.Config, configPath string) error {
+	return serveDashboard(ctx, cfg, configPath)
 }
 
-func Run(ctx context.Context, cfg config.Config) error {
-	return runService(ctx, cfg)
+func Run(ctx context.Context, cfg config.Config, configPath string) error {
+	return runService(ctx, cfg, configPath)
 }

@@ -14,24 +14,38 @@ SELECT COUNT(*)
 FROM routing_examples
 WHERE lower(sender) = lower(?1)
 	AND lower(recipient) = lower(?2)
-	AND document_type = ?3
-	AND folder = ?4
+	AND recipient_scope = ?3
+	AND document_type = ?4
+	AND folder = ?5
 `
 
 type ApprovedExampleCountParams struct {
-	Sender       string `json:"sender"`
-	Recipient    string `json:"recipient"`
-	DocumentType string `json:"document_type"`
-	Folder       string `json:"folder"`
+	Sender         string `json:"sender"`
+	Recipient      string `json:"recipient"`
+	RecipientScope string `json:"recipient_scope"`
+	DocumentType   string `json:"document_type"`
+	Folder         string `json:"folder"`
 }
 
 func (q *Queries) ApprovedExampleCount(ctx context.Context, arg ApprovedExampleCountParams) (int64, error) {
 	row := q.db.QueryRowContext(ctx, approvedExampleCount,
 		arg.Sender,
 		arg.Recipient,
+		arg.RecipientScope,
 		arg.DocumentType,
 		arg.Folder,
 	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countRoutingExamples = `-- name: CountRoutingExamples :one
+SELECT COUNT(*) FROM routing_examples
+`
+
+func (q *Queries) CountRoutingExamples(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRoutingExamples)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -97,21 +111,22 @@ func (q *Queries) IncrementFolderApproval(ctx context.Context, arg IncrementFold
 
 const insertRoutingExample = `-- name: InsertRoutingExample :exec
 INSERT INTO routing_examples (
-	created_at, source_job_id, sender, recipient, document_type, folder, filename, weight
+	created_at, source_job_id, sender, recipient, recipient_scope, document_type, folder, filename, weight
 ) VALUES (
-	?, ?, ?, ?, ?, ?, ?, ?
+	?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
 type InsertRoutingExampleParams struct {
-	CreatedAt    string  `json:"created_at"`
-	SourceJobID  string  `json:"source_job_id"`
-	Sender       string  `json:"sender"`
-	Recipient    string  `json:"recipient"`
-	DocumentType string  `json:"document_type"`
-	Folder       string  `json:"folder"`
-	Filename     string  `json:"filename"`
-	Weight       float64 `json:"weight"`
+	CreatedAt      string  `json:"created_at"`
+	SourceJobID    string  `json:"source_job_id"`
+	Sender         string  `json:"sender"`
+	Recipient      string  `json:"recipient"`
+	RecipientScope string  `json:"recipient_scope"`
+	DocumentType   string  `json:"document_type"`
+	Folder         string  `json:"folder"`
+	Filename       string  `json:"filename"`
+	Weight         float64 `json:"weight"`
 }
 
 func (q *Queries) InsertRoutingExample(ctx context.Context, arg InsertRoutingExampleParams) error {
@@ -120,6 +135,7 @@ func (q *Queries) InsertRoutingExample(ctx context.Context, arg InsertRoutingExa
 		arg.SourceJobID,
 		arg.Sender,
 		arg.Recipient,
+		arg.RecipientScope,
 		arg.DocumentType,
 		arg.Folder,
 		arg.Filename,
@@ -177,6 +193,55 @@ func (q *Queries) ListFolders(ctx context.Context) ([]string, error) {
 			return nil, err
 		}
 		items = append(items, path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRoutingExamples = `-- name: ListRoutingExamples :many
+SELECT sender, recipient, recipient_scope, document_type, folder, MAX(filename) AS filename, COUNT(*) AS approvals
+FROM routing_examples
+GROUP BY sender, recipient, recipient_scope, document_type, folder
+ORDER BY MAX(id) DESC
+LIMIT 500
+`
+
+type ListRoutingExamplesRow struct {
+	Sender         string      `json:"sender"`
+	Recipient      string      `json:"recipient"`
+	RecipientScope string      `json:"recipient_scope"`
+	DocumentType   string      `json:"document_type"`
+	Folder         string      `json:"folder"`
+	Filename       interface{} `json:"filename"`
+	Approvals      int64       `json:"approvals"`
+}
+
+func (q *Queries) ListRoutingExamples(ctx context.Context) ([]ListRoutingExamplesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listRoutingExamples)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRoutingExamplesRow{}
+	for rows.Next() {
+		var i ListRoutingExamplesRow
+		if err := rows.Scan(
+			&i.Sender,
+			&i.Recipient,
+			&i.RecipientScope,
+			&i.DocumentType,
+			&i.Folder,
+			&i.Filename,
+			&i.Approvals,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

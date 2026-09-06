@@ -10,7 +10,7 @@ The Makefile is the main entry point for installation, local use, testing, and t
 make help
 ```
 
-For a first-time setup using the default folders:
+For a first-time setup:
 
 ```bash
 make setup
@@ -19,9 +19,9 @@ make run
 
 Then open [http://127.0.0.1:8844](http://127.0.0.1:8844), or run `make open`.
 
-`make setup` compiles Paperless, writes the config if it does not exist, installs the required Homebrew tools, downloads the Ollama model, creates the SQLite database, and creates every runtime folder. This includes the configured scanner inbox.
+`make setup` opens the native macOS folder chooser because Paperless requires the user to select a base documents directory. Choose any existing folder that is locally accessible through Finder: an ordinary folder, a mounted file server, or a folder synced by Dropbox, Google Drive, iCloud Drive, OneDrive, or another provider. Paperless does not assume a provider or include a personal path in its defaults.
 
-On current macOS Dropbox installations, first-time configuration detects `~/Library/CloudStorage/Dropbox/Dokumente` (or `Documents`) automatically when it exists.
+The setup then writes the private user config, installs the required Homebrew tools, downloads the Ollama model, creates the local SQLite database, and creates every runtime folder. This includes the dedicated scanner inbox. The same guided storage and SMB instructions remain available under **Setup** in the dashboard.
 
 To choose the important folders during first setup:
 
@@ -68,7 +68,7 @@ For a one-off watched folder without changing the config:
 make run INBOX="$HOME/Desktop/test-inbox"
 ```
 
-## Printer Sharing
+## Scanner Sharing
 
 Paperless checks whether the configured inbox is currently published as an SMB share on macOS. Until it is shared, both `paperless init` and the dashboard show the exact folder and setup steps.
 
@@ -110,11 +110,11 @@ Process the inbox once and exit:
 make process
 ```
 
-Upload a document in the dashboard to send it through the same pipeline as the scanner inbox. The upload receives a normal SQLite job, keeps its raw copy, appears in Recent Scans and All Documents, and is always placed in the Review Queue before filing. The review screen lets you select an existing archive folder or type a new relative folder, correct the document type, adjust the filename, inspect OCR PDF/overlay/text, and approve the final destination.
+Upload a document in the dashboard to send it through the same pipeline as the scanner inbox. The upload receives a normal SQLite job, keeps its raw copy, appears in Recent Scans and All Documents, and is always placed in the Review Queue before filing. The review screen lets you navigate each level of the archive folder path, use the separate **Other directory…** button for a new relative folder, correct the recipient and their personal/business capacity, select the document type, and adjust the filename. Paper-original retention is a highlighted recommendation derived from the final document type and configured policy; no extra selection is required. Inspect the PDF/overlay/text before approving the final destination. Processing, Review, Documents, and Setup keep navigation fixed and scroll their content within the viewport. Rejecting a review permanently deletes its database record, raw copy, review copy, and OCR workspace.
 
 PDFs downloaded from email or a customer portal use their existing embedded text layer when it is complete. Paperless keeps such PDFs unchanged and skips image cleanup and Tesseract; scanned and mixed-content PDFs still use the OCR pipeline. The review screen labels the preserved file as `Original PDF` and only offers the OCR overlay when OCR was actually run.
 
-Retail receipts are detected from both their narrow scan geometry and point-of-sale text. Scanner-bed margins are cropped before OCR, while normal A4 letters keep their page shape. Receipts default to `Belege`, use `YYYY-MM-DD__merchant__receipt.pdf`, and remain in review until the normal learning policy allows automatic filing.
+Retail receipts are detected from both their narrow scan geometry and point-of-sale text. Scanner-bed margins are cropped before OCR, while normal A4 letters keep their page shape. Letters align to text baselines before considering paper edges, so skewed scanner-bed edges do not override straight writing. Receipts default to `Belege`, use `YYYY-MM-DD__merchant__receipt.pdf`, and remain in review until the normal learning policy allows automatic filing.
 
 Analyze an existing document from the terminal without creating a document job:
 
@@ -126,16 +126,16 @@ The terminal `dry-run` command remains intentionally isolated. Use dashboard upl
 
 ## Archive Folders
 
-`paths.archive_root` is the only root used for final documents. Paperless sends directories discovered below that root together with explicitly configured taxonomy folders to the local model. A configured folder such as `Belege` can therefore be selected before its first approval; approving it creates the directory below the archive root. Sender mappings whose destinations are neither discovered nor configured are ignored.
+`paths.archive_root` is the user-selected base documents directory and the only root used for final documents. Paperless sends directories discovered below that root together with explicitly configured taxonomy folders to the local model. A configured folder such as `Belege` can therefore be selected before its first approval; approving it creates the directory below the archive root. Sender mappings whose destinations are neither discovered nor configured are ignored.
 
-The active archive root and its discovered folders are visible under Setup in the dashboard. Set the root in `~/.paperless/config.toml` or during configuration:
+The selected directory and its discovered folders are visible under Setup in the dashboard. Use **Choose documents folder** there, run `paperless configure` for the native picker, or provide an explicit local path for unattended configuration:
 
 ```bash
-make configure FORCE=1 ARCHIVE="$HOME/Library/CloudStorage/Dropbox/Archiv"
+make configure FORCE=1 ARCHIVE="$HOME/Documents"
 make init
 ```
 
-Approving a typed relative folder creates it below the archive root and records that sender, recipient, document type, and folder as a learned routing example. Absolute paths and paths escaping the archive root are rejected.
+Approving a typed relative folder creates it below the archive root and records that sender, recipient, personal/business capacity, document type, and folder as a learned routing example. Absolute paths and paths escaping the archive root are rejected.
 
 ## macOS Service
 
@@ -151,7 +151,7 @@ A LaunchAgent runs in the logged-in user session, which fits Dropbox, Ollama, Fi
 
 ## Homebrew Releases
 
-GitHub releases automatically build native macOS binaries for Apple silicon and Intel Macs and update the public `homebrew` repository. The formula selects the matching binary from a checksummed release bundle, so users do not need Go, Bun, or repository credentials.
+GitHub releases automatically build native macOS binaries for Apple silicon and Intel Macs and update the public `homebrew` repository. The formula selects the matching binary from a checksummed release bundle, so users do not need Go, Bun, or repository credentials. When the Apple credentials described in [Code signing](docs/CODE_SIGNING.md) are configured, the macOS runner signs every distributed binary with a Developer ID certificate and submits it to Apple's notarization service before calculating those checksums.
 
 To publish a version, create a GitHub release whose tag follows semantic versioning, for example `v0.1.0`. The release workflow uploads both macOS archives, updates `Formula/paperless.rb` in the tap, and pushes a matching `paperless-v0.1.0` tap tag. The tap then publishes its own GitHub release. Prereleases receive archives but do not replace the stable Homebrew formula.
 
@@ -162,19 +162,17 @@ brew tap coryoso/homebrew https://github.com/coryoso/homebrew.git
 brew install coryoso/homebrew/paperless
 ```
 
-For the first setup, start your existing Ollama app or install its Homebrew service, then initialize the OCR tools and local model and start Paperless:
+For the first setup, start your existing Ollama app or install its Homebrew service, then start Paperless:
 
 ```bash
 # Skip these two lines if the Ollama app is already running.
 brew install ollama
 brew services start ollama
 
-paperless configure
-paperless init
 brew services start coryoso/homebrew/paperless
 ```
 
-Paperless starts immediately, restarts if it crashes, and launches again when the macOS user logs in. The dashboard is available at [http://127.0.0.1:8844](http://127.0.0.1:8844).
+Open [http://127.0.0.1:8844](http://127.0.0.1:8844), choose the base documents directory, and follow the displayed SMB sharing steps. The service safely waits for that selection before processing documents, restarts after saving it, restarts if it crashes, and launches again when the macOS user logs in.
 
 Upgrade after publishing another release with:
 
@@ -194,9 +192,13 @@ The primary SQLite database is local:
 ~/Library/Application Support/Paperless/paperless.sqlite
 ```
 
-The database is deliberately not placed directly in Dropbox because sync conflicts can corrupt a live SQLite database. Final PDFs are written below the configured Dropbox archive root.
+The database is deliberately not placed directly in the selected documents directory because sync conflicts can corrupt a live SQLite database. Final PDFs are written below that directory instead.
 
-Routing examples include sender, recipient/addressee, document type, and folder. This allows otherwise similar documents to be learned differently depending on whether they are addressed to a person, household, or company.
+Paperless creates a transactionally consistent snapshot 30 seconds after the configured service starts and every 24 hours thereafter. Snapshots are validated locally, copied under a temporary name, and atomically renamed inside `<documents directory>/.paperless-backups`; the newest 14 are retained. A Dropbox, Google Drive, or other sync client therefore sees only completed backup files rather than the live database or its write-ahead state. Use **Back up now** under Setup or run `paperless backup` for an immediate snapshot.
+
+Routing examples include sender, recipient/addressee, capacity (personal, sole proprietor, GbR, other organization, or unknown), document type, folder, and filename. They are persisted in `paperless.sqlite` inside the configured state directory. Setup displays the database location and approval count. The model receives up to 12 relevant approved routing patterns from the 500 most recently recorded distinct patterns; matching learned destinations are included even when the normal folder shortlist would omit them. Exact sender/recipient/capacity/type matches also guide local rule suggestions. Conflicting destinations and ambiguous recipients remain subject to review. This is retrieval of saved examples, not model retraining. Moving files directly in Finder does not create learning examples. Earlier examples without a capacity are retained as unknown and do not count toward capacity-specific automatic filing.
+
+**Setup → Recipients & learning** lets you add and edit recipient names, aliases, capacities, and optional filing areas. Review offers saved recipients first and a separate **New recipient…** choice. Confirmed new recipients are added automatically on approval. Selecting a saved recipient resolves to its stored name and capacity; when the detected name differs, successful approval adds it as an alias. The review shows the alias that will be learned, and aliases remain editable in Setup. Known aliases are reused on later documents, including confirmed OCR misspellings. Conflicting aliases do not automatically pick an identity. The same name can have separate personal and sole proprietor profiles. A GbR is separate from its individual partners: a personally addressed tax reminder cannot route into a GbR area merely because the person's name appears in the company name. Filing areas reserve a directory subtree for a recipient/capacity, and the most specific configured area wins. Ambiguous business capacity or inconsistent recipient evidence requires review.
 
 ## Development
 
@@ -225,3 +227,11 @@ SQL migrations live in `internal/db/migrations/`, typed queries in `internal/db/
 make sqlc
 make test
 ```
+
+### Readable document text
+
+The **Text** preview offers **Formatted**, **Markdown**, and **Raw text**, plus a Markdown download. For scans, headings, paragraphs, columns, and table cells are reconstructed from Tesseract's saved word positions. Existing scans can use this view without being processed again. New processing saves `document.md` in the job workspace; classification uses reconstructed reading order for local rules and Markdown for the local model. Raw OCR, its duplicate-detection hash, and the searchable PDF are retained separately. Embedded PDF text keeps its original fixed spacing when no OCR geometry exists. Layout is an estimate: it does not rewrite recognized words or guarantee correct table boundaries, so the scan and raw text remain available for comparison.
+
+### Parallel upload processing
+
+Uploads use two OCR workers by default, so image cleanup and Tesseract for separate documents can overlap. Classification and final processing run one document at a time, allowing OCR to proceed while the local model is busy. Each page's searchable PDF, plain text, and word positions are generated by one Tesseract recognition pass with one OpenMP thread. Configure `[ocr] workers = 2` in the TOML configuration to adjust parallelism (1–8; unset or nonpositive uses 2). The queue keeps at most one more active document than OCR workers to bound memory and disk work. Progress distinguishes waiting for OCR from waiting for classification.

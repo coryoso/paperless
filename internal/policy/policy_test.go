@@ -31,6 +31,8 @@ func TestPolicyRequiresLearnedExamples(t *testing.T) {
 	c := classify.Classification{
 		DocumentType:           "receipt",
 		Sender:                 "rewe",
+		Recipient:              "alex-example",
+		RecipientScope:         "personal",
 		SuggestedFolder:        "Receipts/Groceries",
 		PhysicalOriginalAction: "discard_candidate",
 		Confidence:             0.96,

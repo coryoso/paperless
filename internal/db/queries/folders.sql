@@ -43,9 +43,9 @@ WHERE path = ?;
 
 -- name: InsertRoutingExample :exec
 INSERT INTO routing_examples (
-	created_at, source_job_id, sender, recipient, document_type, folder, filename, weight
+	created_at, source_job_id, sender, recipient, recipient_scope, document_type, folder, filename, weight
 ) VALUES (
-	?, ?, ?, ?, ?, ?, ?, ?
+	?, ?, ?, ?, ?, ?, ?, ?, ?
 );
 
 -- name: ApprovedExampleCount :one
@@ -53,5 +53,16 @@ SELECT COUNT(*)
 FROM routing_examples
 WHERE lower(sender) = lower(@sender)
 	AND lower(recipient) = lower(@recipient)
+	AND recipient_scope = @recipient_scope
 	AND document_type = @document_type
 	AND folder = @folder;
+
+-- name: ListRoutingExamples :many
+SELECT sender, recipient, recipient_scope, document_type, folder, MAX(filename) AS filename, COUNT(*) AS approvals
+FROM routing_examples
+GROUP BY sender, recipient, recipient_scope, document_type, folder
+ORDER BY MAX(id) DESC
+LIMIT 500;
+
+-- name: CountRoutingExamples :one
+SELECT COUNT(*) FROM routing_examples;
