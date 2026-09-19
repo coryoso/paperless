@@ -59,6 +59,8 @@ export type Dashboard = {
     scanner_share_checked: boolean;
     scanner_share_ready: boolean;
     model: string;
+    model_provider: "ollama" | "fm";
+    model_enabled: boolean;
   };
   stats: {
     review: number;

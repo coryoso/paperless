@@ -145,6 +145,28 @@ func TestDashboardDropsRemovedArchiveFolders(t *testing.T) {
 	}
 }
 
+func TestDashboardReportsFMWithEmptyArchive(t *testing.T) {
+	cfg := testServerConfig(t.TempDir())
+	cfg.Policy.KnownFolders = nil
+	cfg.LLM.Provider = "fm"
+	cfg.LLM.Model = "system"
+	cfg.LLM.Enabled = true
+	processor, cleanup, err := newProcessor(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	recorder := httptest.NewRecorder()
+	processor.handleDashboardAPI(recorder, httptest.NewRequest(http.MethodGet, "/api/dashboard", nil))
+	var dashboard dashboardResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &dashboard); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK || dashboard.Folders == nil || dashboard.Settings.ModelProvider != "fm" || dashboard.Settings.Model != "system" || !dashboard.Settings.ModelEnabled {
+		t.Fatalf("unexpected dashboard: %s", recorder.Body.String())
+	}
+}
+
 func TestConfiguredFoldersAreAvailableBeforeFirstApproval(t *testing.T) {
 	base := t.TempDir()
 	cfg := testServerConfig(base)

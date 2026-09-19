@@ -1,6 +1,6 @@
 # Paperless
 
-Paperless is a local-first document archive for macOS. It accepts scans and uploads, keeps the original document, cleans and straightens scanned pages, runs Tesseract OCR, creates a searchable PDF, and uses a local Ollama model to suggest a filename and archive destination. Documents remain on the Mac or in a folder that is locally available through Finder.
+Paperless is a local-first document archive for macOS. It accepts scans and uploads, keeps the original document, cleans and straightens scanned pages, runs Tesseract OCR, creates a searchable PDF, and uses Ollama or Apple Foundation Models to suggest a filename and archive destination. Documents remain on the Mac or in a folder that is locally available through Finder.
 
 ## Install with Homebrew
 
@@ -11,7 +11,7 @@ brew tap coryoso/homebrew https://github.com/coryoso/homebrew.git
 brew install coryoso/homebrew/paperless
 ```
 
-Paperless uses Ollama for local document classification. Skip the installation command if the Ollama app is already installed and running.
+Paperless defaults to Ollama for local document classification. Skip the installation command if the Ollama app is already installed and running, or if you plan to select Apple Foundation Models in Setup.
 
 ```bash
 brew install ollama
@@ -108,6 +108,20 @@ brew services restart coryoso/homebrew/paperless
 
 The archive root must be selected by the user. Relative filing destinations are constrained below that root; absolute paths and paths that escape it are rejected.
 
+### Apple Foundation Models
+
+In **Setup → Choose your local model**, select **Apple Foundation Models** and click **Save model**. Paperless checks `fm available --model system`, saves the choice, and restarts. This requires a Mac with Apple Intelligence enabled and an installed `fm` command supporting `respond`, `count-tokens`, and structured schemas. Check availability in Terminal first:
+
+```bash
+fm available --model system
+```
+
+For a new command-line setup, use `paperless configure --llm-provider fm` or `make setup LLM_PROVIDER=fm`. For an existing configuration, change `provider = "fm"` in the `[llm]` section of `~/.paperless/config.toml` and restart Paperless. The model resolves to `system`, even if an old Qwen tag remains in the file. `paperless doctor` checks the selected provider.
+
+Paperless calls `fm respond` directly, with document text passed through standard input and an enforced output schema. No `fm serve`, Ollama service, or Ollama model download is needed. The existing recipient, folder, filename, and retention policies still apply. Ollama-specific endpoint, context, reasoning, output, and keep-alive settings are ignored; `timeout_seconds` applies to both providers.
+
+Apple's on-device model has a smaller context window than the default Qwen configuration. Paperless counts tokens and shortens long document excerpts or filing context as needed; these documents always require review. A missing command, unavailable model, refusal, timeout, or invalid response falls back to local rules and is reported in processing progress. Select Ollama again in Setup to return to Qwen 3.5; a custom Ollama tag can be set through `llm.model` in the configuration.
+
 ### Command-line operations
 
 ```bash
@@ -122,7 +136,7 @@ Run `paperless help` for the complete command list.
 
 ## Development
 
-Building from source requires Go, Bun, the OCR/PDF tools, and Ollama. The Makefile is the main development entry point:
+Building from source requires Go, Bun, the OCR/PDF tools, and either Ollama or an available Apple Foundation Models `fm` command. The Makefile is the main development entry point:
 
 ```bash
 make help
@@ -130,7 +144,7 @@ make setup
 make run
 ```
 
-`make setup` builds Paperless, opens the native macOS folder chooser, writes the private user configuration, installs missing runtime dependencies, downloads the configured Ollama model, creates the SQLite database, and prepares the runtime folders.
+`make setup` builds Paperless, opens the native macOS folder chooser, writes the private user configuration, installs missing runtime dependencies, downloads the configured Ollama model (or checks `fm` for Apple Foundation Models), creates the SQLite database, and prepares the runtime folders.
 
 Use a disposable configuration for development or testing:
 

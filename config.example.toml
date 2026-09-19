@@ -25,6 +25,8 @@ crop_content = true
 crop_padding_pixels = 30
 min_crop_confidence = 0.75
 
+# Set provider to "fm" for Apple Foundation Models via the local fm command.
+# fm uses the system model; only enabled and timeout_seconds below also apply.
 [llm]
 provider = "ollama"
 endpoint = "http://localhost:11434"

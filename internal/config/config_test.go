@@ -102,3 +102,30 @@ func TestDefaultUsesNineBModelSettings(t *testing.T) {
 		t.Fatalf("keep alive = %q", got)
 	}
 }
+
+func TestLoadFMProviderOverridesInheritedOllamaModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[llm]\nprovider = 'fm'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LLM.Provider != "fm" || cfg.LLM.Model != "system" {
+		t.Fatalf("fm config = %+v", cfg.LLM)
+	}
+	cfg.LLM.Provider = "ollama"
+	cfg, err = cfg.Resolve()
+	if err != nil || cfg.LLM.Model != Default().LLM.Model {
+		t.Fatalf("switch back to Ollama = %+v, %v", cfg.LLM, err)
+	}
+}
+
+func TestResolveRejectsUnknownModelProvider(t *testing.T) {
+	cfg := Default()
+	cfg.LLM.Provider = "typo"
+	if _, err := cfg.Resolve(); err == nil {
+		t.Fatal("expected unknown provider error")
+	}
+}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"paperless/internal/config"
+	"paperless/internal/fm"
 )
 
 func chooseDocumentsDirectory(ctx context.Context) (string, error) {
@@ -125,6 +127,10 @@ func (p *Processor) handleChooseDocumentsDirectoryAPI(w http.ResponseWriter, r *
 		"documents_directory": selected,
 		"restarting":          true,
 	})
+	p.requestRestart()
+}
+
+func (p *Processor) requestRestart() {
 	go func() {
 		timer := time.NewTimer(300 * time.Millisecond)
 		defer timer.Stop()
@@ -134,6 +140,47 @@ func (p *Processor) handleChooseDocumentsDirectoryAPI(w http.ResponseWriter, r *
 		default:
 		}
 	}()
+}
+
+func (p *Processor) handleModelSetupAPI(w http.ResponseWriter, r *http.Request) {
+	if !localRequest(r) {
+		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), http.StatusForbidden)
+		return
+	}
+	var input struct {
+		Provider string `json:"provider"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeAPIError(w, err, http.StatusBadRequest)
+		return
+	}
+	if input.Provider != "ollama" && input.Provider != "fm" {
+		writeAPIError(w, errors.New("provider must be ollama or fm"), http.StatusBadRequest)
+		return
+	}
+	if input.Provider == "fm" {
+		if err := fm.Available(r.Context()); err != nil {
+			writeAPIError(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	// Load the latest saved settings so switching models preserves changes made
+	// through other setup controls while this process is still running.
+	cfg, err := config.Load(p.configPath)
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	cfg.LLM.Provider = input.Provider
+	cfg.LLM.Enabled = true
+	if _, err := config.Write(p.configPath, cfg); err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"provider": input.Provider, "restarting": true})
+	p.requestRestart()
 }
 
 func (p *Processor) handleOpenSharingSettingsAPI(w http.ResponseWriter, r *http.Request) {

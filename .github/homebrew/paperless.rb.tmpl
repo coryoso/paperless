@@ -28,7 +28,9 @@ class Paperless < Formula
 
   def caveats
     <<~EOS
-      Local classification requires a running Ollama app or service.
+      Local classification uses Ollama or Apple Foundation Models.
+      Choose Apple Foundation Models in Setup if `fm available` succeeds,
+      or use a running Ollama app or service with the configured model.
 
       Start Paperless now and automatically at login with:
         brew services start paperless

@@ -5,9 +5,15 @@ import type { Dashboard } from "./types";
 afterEach(() => mock.restore());
 
 describe("dashboard API", () => {
+  it("saves Apple Foundation Models as the provider", async () => {
+    const fetchMock = mock(() => Promise.resolve(new Response(JSON.stringify({ provider: "fm", restarting: true }), { status: 202 })));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    await expect(api.setModelProvider("fm")).resolves.toEqual({ provider: "fm", restarting: true });
+    expect(fetch).toHaveBeenCalledWith("/api/setup/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "fm" }) });
+  });
   it("loads the database-backed dashboard", async () => {
     const payload: Dashboard = {
-      settings: { inbox: "/inbox", archive_root: "/archive", archive_exists: true, archive_error: "", setup_required: false, scanner_share_checked: true, scanner_share_ready: true, model: "qwen3.5" },
+      settings: { inbox: "/inbox", archive_root: "/archive", archive_exists: true, archive_error: "", setup_required: false, scanner_share_checked: true, scanner_share_ready: true, model: "qwen3.5", model_provider: "ollama", model_enabled: true },
       stats: { review: 0, archived: 0, failed: 0, total: 0 },
       folders: ["Tax/2026"],
       review_jobs: [],

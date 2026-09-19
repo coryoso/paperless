@@ -3,6 +3,7 @@
 BINARY ?= bin/paperless
 CONFIG ?= $(HOME)/.paperless/config.toml
 MODEL ?= qwen3.5:9b-q4_K_M
+LLM_PROVIDER ?= ollama
 FILE ?=
 INBOX ?=
 BASE ?=
@@ -11,12 +12,12 @@ STATE_DIR ?=
 PORT ?=
 FORCE ?=
 
-CONFIGURE_FLAGS = $(if $(FORCE),--force) $(if $(BASE),--base "$(BASE)") $(if $(INBOX),--inbox "$(INBOX)") $(if $(ARCHIVE),--archive "$(ARCHIVE)") $(if $(STATE_DIR),--state-dir "$(STATE_DIR)") $(if $(PORT),--port "$(PORT)")
+CONFIGURE_FLAGS = --llm-provider "$(LLM_PROVIDER)" $(if $(FORCE),--force) $(if $(BASE),--base "$(BASE)") $(if $(INBOX),--inbox "$(INBOX)") $(if $(ARCHIVE),--archive "$(ARCHIVE)") $(if $(STATE_DIR),--state-dir "$(STATE_DIR)") $(if $(PORT),--port "$(PORT)")
 
 .PHONY: help build web-install web-build web-dev web-test setup configure init init-folders doctor backup run serve open process dry-run model test test-unit test-race acceptance fmt vet check sqlc service-install service-start service-stop service-status
 
 help: ## Show the available commands and optional variables.
-	@awk 'BEGIN {FS = ":.*## "; printf "Paperless local commands\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-17s %s\n", $$1, $$2} END {printf "\nVariables: CONFIG, INBOX, BASE, ARCHIVE, STATE_DIR, PORT, FILE, MODEL, FORCE\n"}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "; printf "Paperless local commands\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-17s %s\n", $$1, $$2} END {printf "\nVariables: CONFIG, INBOX, BASE, ARCHIVE, STATE_DIR, PORT, FILE, MODEL, LLM_PROVIDER, FORCE\n"}' $(MAKEFILE_LIST)
 
 build: web-build ## Build the React client and compile the single Paperless binary.
 	@mkdir -p "$(dir $(BINARY))"
@@ -52,7 +53,7 @@ init: build ## Install runtime tools/model and create all configured folders, in
 init-folders: build ## Create folders and the database without installing Homebrew tools or a model.
 	"$(BINARY)" --config "$(CONFIG)" init --skip-install
 
-doctor: build ## Check OCR tools, language data, Ollama, model, and configured paths.
+doctor: build ## Check OCR tools, language data, selected model provider, and configured paths.
 	"$(BINARY)" --config "$(CONFIG)" doctor
 
 backup: build ## Create and validate a SQLite snapshot in the selected documents directory.

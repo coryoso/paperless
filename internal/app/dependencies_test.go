@@ -3,6 +3,9 @@ package app
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"paperless/internal/config"
@@ -52,5 +55,25 @@ func TestOllamaModelDetailExplainsMissingTag(t *testing.T) {
 	}
 	if got != "no installed Qwen 3.5 model; run `ollama pull qwen3.5:9b-q4_K_M`" {
 		t.Fatalf("detail = %q", got)
+	}
+}
+
+func TestFMDoesNotRequireOllamaInstallation(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"tesseract", "pdftoppm", "pdftotext", "pdfinfo", "pdfimages", "qpdf"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	cfg := config.Default()
+	cfg.OCR.Languages = []string{"eng"}
+	cfg.LLM.Provider = "fm"
+	if missing := missingBrewFormulas(t.Context(), cfg); len(missing) != 0 {
+		t.Fatalf("FM should not install Ollama: %v", missing)
+	}
+	cfg.LLM.Provider = "ollama"
+	if missing := missingBrewFormulas(t.Context(), cfg); !slices.Contains(missing, "ollama") {
+		t.Fatalf("Ollama dependency check regressed: %v", missing)
 	}
 }

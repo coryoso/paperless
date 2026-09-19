@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"paperless/internal/config"
+	"paperless/internal/fm"
 	"paperless/internal/ocr"
 )
 
@@ -30,6 +31,12 @@ type ollamaModelInfo struct {
 }
 
 func InstallRuntimeDependencies(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) error {
+	if cfg.LLM.Enabled && cfg.LLM.Provider == "fm" {
+		if err := fm.Available(ctx); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "Using Apple Foundation Models via fm; no Ollama download is needed.")
+	}
 	if runtime.GOOS != "darwin" {
 		fmt.Fprintln(stdout, "Skipping Homebrew dependency install: macOS only.")
 		return nil

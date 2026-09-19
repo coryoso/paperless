@@ -39,6 +39,7 @@ type Classification struct {
 	Reasons                []string        `json:"reasons"`
 	Sensitive              bool            `json:"sensitive"`
 	Source                 string          `json:"source"`
+	ModelContextTruncated  bool            `json:"model_context_truncated,omitempty"`
 	FolderRankings         []FolderRanking `json:"folder_rankings"`
 }
 
@@ -120,21 +121,31 @@ func ClassifyWithHistory(ctx context.Context, cfg config.Config, text, sourceFil
 	base := deterministic(cfg, text, sourceFilename, scanDate, folders)
 	examples := relevantExamples(base, history, folders, cfg)
 	applyLearnedRouting(&base, examples)
-	if !cfg.LLM.Enabled || cfg.LLM.Provider != "ollama" {
-		reporter.Info("classify", "complete", "Using local rules because Ollama is disabled.", 0, 0, 94)
+	if !cfg.LLM.Enabled {
+		reporter.Info("classify", "complete", "Using local rules because model classification is disabled.", 0, 0, 94)
 		return PreferSavedRecipient(base, cfg)
 	}
 	modelText := text
 	if len(layout) > 0 && strings.TrimSpace(layout[0]) != "" {
 		modelText = layout[0]
 	}
-	llm, err := classifyWithOllama(ctx, cfg, modelText, sourceFilename, scanDate, folders, base, reporter, examples...)
+	var llm Classification
+	var err error
+	switch cfg.LLM.Provider {
+	case "ollama":
+		llm, err = classifyWithOllama(ctx, cfg, modelText, sourceFilename, scanDate, folders, base, reporter, examples...)
+	case "fm":
+		llm, err = classifyWithFM(ctx, cfg, modelText, sourceFilename, scanDate, folders, reporter, examples)
+	default:
+		err = fmt.Errorf("unsupported model provider %q", cfg.LLM.Provider)
+	}
 	if err != nil {
-		reporter.Warn("llm", "fallback", "Ollama unavailable or invalid; using local rules: "+err.Error(), 0, 0, 94)
-		base.Reasons = append(base.Reasons, "ollama unavailable or invalid: "+err.Error())
+		reporter.Warn("llm", "fallback", cfg.LLM.Provider+" unavailable or invalid; using local rules: "+err.Error(), 0, 0, 94)
+		base.Reasons = append(base.Reasons, cfg.LLM.Provider+" unavailable or invalid: "+err.Error())
+		base.ModelContextTruncated = llm.ModelContextTruncated
 		return PreferSavedRecipient(base, cfg)
 	}
-	reporter.Info("classify", "merge", "Merging Ollama suggestion with local policy rules.", 0, 0, 95)
+	reporter.Info("classify", "merge", "Merging "+cfg.LLM.Provider+" suggestion with local policy rules.", 0, 0, 95)
 	out := merge(base, llm, cfg, text, scanDate, folders)
 	applyLearnedRouting(&out, relevantExamples(out, history, folders, cfg))
 	validateRecipientFolder(&out, cfg)
@@ -670,8 +681,12 @@ func merge(base, llm Classification, cfg config.Config, text string, scanDate ti
 	out.PhysicalOriginalAction = physicalAction(cfg, out.DocumentType, out.Sensitive)
 	out.SuggestedFilename = BuildFilename(out.DocumentDate, out.Sender, out.DocumentType, subjectFromSummary(out.Summary, out.DocumentType))
 	out.Confidence = clamp(llm.Confidence, base.Confidence, 0.98)
-	out.Reasons = append([]string{"ollama structured suggestion"}, llm.Reasons...)
-	out.Source = "ollama"
+	out.Source = llm.Source
+	if out.Source == "" {
+		out.Source = cfg.LLM.Provider
+	}
+	out.Reasons = append([]string{out.Source + " structured suggestion"}, llm.Reasons...)
+	out.ModelContextTruncated = llm.ModelContextTruncated
 	validateRecipientFolder(&out, cfg)
 	return out
 }

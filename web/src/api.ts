@@ -10,6 +10,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  setModelProvider: (provider: "ollama" | "fm") => request<{ provider: string; restarting: boolean }>("/api/setup/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider }) }),
   chooseDocumentsDirectory: () => request<{ documents_directory: string; restarting: boolean }>("/api/setup/documents-directory", { method: "POST" }),
   openSharingSettings: () => request<{ ok: boolean }>("/api/setup/open-sharing-settings", { method: "POST" }),
   backupDatabase: () => request<{ path: string }>("/api/backups", { method: "POST" }),

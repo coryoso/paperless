@@ -57,6 +57,8 @@ const emptyDashboard: Dashboard = {
     scanner_share_checked: false,
     scanner_share_ready: false,
     model: "",
+    model_provider: "ollama",
+    model_enabled: true,
   },
   stats: { review: 0, archived: 0, failed: 0, total: 0 },
   folders: [],
@@ -610,6 +612,18 @@ function Setup({ dashboard, onRefresh }: { dashboard: Dashboard; onRefresh: () =
   const [restarting, setRestarting] = useState(false);
   const [setupError, setSetupError] = useState("");
   const [backingUp, setBackingUp] = useState(false);
+  const [modelProvider, setModelProvider] = useState(dashboard.settings.model_provider);
+  const [savingModel, setSavingModel] = useState(false);
+  const saveModel = async () => {
+    setSavingModel(true); setSetupError("");
+    try {
+      await api.setModelProvider(modelProvider);
+      setRestarting(true);
+      window.setTimeout(() => window.location.reload(), 1500);
+    } catch (reason) {
+      setSetupError(errorMessage(reason)); setSavingModel(false);
+    }
+  };
   const chooseDirectory = async () => {
     setChoosing(true); setSetupError("");
     try {
@@ -630,7 +644,7 @@ function Setup({ dashboard, onRefresh }: { dashboard: Dashboard; onRefresh: () =
     finally { setBackingUp(false); }
   };
   return <section className="setup-layout">
-    <div className="setup-title"><span className="eyebrow">{dashboard.settings.setup_required ? "Welcome to Paperless" : "Setup"}</span><h2>Storage & scanner</h2></div>
+    <div className="setup-title"><span className="eyebrow">{dashboard.settings.setup_required ? "Welcome to Paperless" : "Setup"}</span><h2>Storage, scanner & model</h2></div>
     <section className={dashboard.settings.setup_required ? "setup-wizard required" : "setup-wizard"}>
       <div className="setup-step-number">1</div>
       <div className="setup-step-copy"><h3>Choose your base documents directory</h3><p>Choose an existing folder on this Mac. It can be an ordinary local folder or a locally available Dropbox, Google Drive, iCloud Drive, OneDrive, or mounted file-server folder.</p><p>Paperless files completed documents below this directory. Its live SQLite database remains in local Application Support so a sync client cannot corrupt it. Consistent database snapshots are stored in a hidden backup folder below the selected directory.</p>{dashboard.settings.archive_root && <code>{dashboard.settings.archive_root}</code>}{dashboard.database_backup?.directory && <p>{dashboard.database_backup.count ? `${dashboard.database_backup.count} database backup${dashboard.database_backup.count === 1 ? "" : "s"} · latest ${dashboard.database_backup.latest}` : "The first database backup will be created after startup."} <button className="text-button" disabled={backingUp} onClick={backupNow}>{backingUp ? "Backing up…" : "Back up now"}</button></p>}{dashboard.settings.archive_error && !dashboard.settings.setup_required && <div className="inline-error">{dashboard.settings.archive_error}</div>}</div>
@@ -641,8 +655,13 @@ function Setup({ dashboard, onRefresh }: { dashboard: Dashboard; onRefresh: () =
       <div className="setup-step-copy"><h3>Share the scanner inbox over SMB</h3><p>Your scanner writes new files to this dedicated inbox:</p><code>{dashboard.settings.inbox}</code><ol><li>Open macOS Sharing settings and turn on File Sharing.</li><li>Add the scanner inbox above as a shared folder.</li><li>Under Options, enable “Share files and folders using SMB” and enable the scanner’s macOS user.</li><li>On the scanner, enter this Mac’s hostname or IP address, the user credentials, and share name <strong>{dashboard.settings.inbox.split("/").filter(Boolean).at(-1) || "inbox"}</strong>.</li></ol><p>Use a dedicated macOS account limited to this inbox when your scanner supports authenticated SMB.</p></div>
       <button className="icon-text-button" onClick={openSharing}>Open Sharing settings</button>
     </section>
-    {setupError && <div className="form-error">{setupError}</div>}
-    <div className="setup-rows"><SetupRow icon={<Inbox />} title="Scanner inbox" value={dashboard.settings.inbox} state={dashboard.settings.scanner_share_ready ? "SMB ready" : "SMB setup needed"} ok={dashboard.settings.scanner_share_ready} /><SetupRow icon={<Archive />} title="Documents directory" value={dashboard.settings.archive_root || "Not selected"} state={dashboard.settings.archive_exists ? "Connected" : dashboard.settings.setup_required ? "Selection required" : "Unavailable"} ok={dashboard.settings.archive_exists} /><SetupRow icon={<FileSearch />} title="Local model" value={dashboard.settings.model} state="Ollama" ok /></div>
+    <section className="setup-wizard">
+      <div className="setup-step-number">3</div>
+      <div className="setup-step-copy"><h3>Choose your local model</h3><p>Both options process documents on this Mac.</p><label className="model-choice"><span>Model provider</span><select value={modelProvider} disabled={savingModel || restarting} onChange={(event) => setModelProvider(event.target.value as "ollama" | "fm")}><option value="ollama">Ollama · Qwen 3.5</option><option value="fm">Apple Foundation Models</option></select></label><p>{modelProvider === "fm" ? "Uses Apple Intelligence through the fm command. No separate model download or server is needed. Documents that exceed its context limit require review." : "Uses your configured Ollama model. Ollama must be running with the model installed."}</p><p>Saving restarts Paperless. Wait for active uploads to finish first.</p></div>
+      <button className="primary-button" disabled={savingModel || restarting || (modelProvider === dashboard.settings.model_provider && dashboard.settings.model_enabled)} onClick={saveModel}>{restarting ? "Restarting Paperless…" : savingModel ? "Checking model…" : "Save model"}</button>
+    </section>
+    {setupError && <div className="form-error" role="alert">{setupError}</div>}
+    <div className="setup-rows"><SetupRow icon={<Inbox />} title="Scanner inbox" value={dashboard.settings.inbox} state={dashboard.settings.scanner_share_ready ? "SMB ready" : "SMB setup needed"} ok={dashboard.settings.scanner_share_ready} /><SetupRow icon={<Archive />} title="Documents directory" value={dashboard.settings.archive_root || "Not selected"} state={dashboard.settings.archive_exists ? "Connected" : dashboard.settings.setup_required ? "Selection required" : "Unavailable"} ok={dashboard.settings.archive_exists} /><SetupRow icon={<FileSearch />} title="Local model" value={dashboard.settings.model_enabled ? dashboard.settings.model_provider === "fm" ? "Apple Foundation Models · system" : `Ollama · ${dashboard.settings.model}` : "Local rules only"} state={dashboard.settings.model_enabled ? "Configured" : "Disabled"} ok={dashboard.settings.model_enabled} /></div>
     {!dashboard.settings.setup_required && <><RecipientSettings dashboard={dashboard} onRefresh={onRefresh} /><section className="folder-browser"><div><span className="eyebrow">Document folders</span><h3>{dashboard.folders.length} available destinations</h3></div><button className="icon-text-button" disabled={refreshing} onClick={async () => { setRefreshing(true); await api.refreshFolders(); await onRefresh(); setRefreshing(false); }}><RefreshCw className={refreshing ? "spin" : ""} /> Refresh</button><div className="folder-grid">{dashboard.folders.map((folder) => <span key={folder}><FolderArchive /> {folder}</span>)}</div></section></>}
   </section>;
 }

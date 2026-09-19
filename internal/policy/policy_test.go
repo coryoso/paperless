@@ -45,6 +45,11 @@ func TestPolicyRequiresLearnedExamples(t *testing.T) {
 	if !decision.AutoFile {
 		t.Fatalf("expected auto-file after learning, reasons: %v", decision.Reasons)
 	}
+	c.ModelContextTruncated = true
+	decision = Evaluate(t.Context(), cfg, fakeCounter{examples: 2, folderOK: true}, c)
+	if decision.AutoFile || len(decision.Reasons) != 1 {
+		t.Fatalf("shortened model context must require review: %+v", decision)
+	}
 }
 
 func TestPolicyBlocksSensitiveDocuments(t *testing.T) {

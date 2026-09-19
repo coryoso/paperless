@@ -81,6 +81,8 @@ type dashboardSettings struct {
 	ScannerShareChecked bool   `json:"scanner_share_checked"`
 	ScannerShareReady   bool   `json:"scanner_share_ready"`
 	Model               string `json:"model"`
+	ModelProvider       string `json:"model_provider"`
+	ModelEnabled        bool   `json:"model_enabled"`
 }
 
 type dashboardStats struct {
@@ -190,6 +192,7 @@ func (p *Processor) serve(ctx context.Context) error {
 	mux.HandleFunc("POST /api/recipients", p.handleSaveRecipientAPI)
 	mux.HandleFunc("POST /api/backups", p.handleDatabaseBackupAPI)
 	mux.HandleFunc("POST /api/setup/documents-directory", p.handleChooseDocumentsDirectoryAPI)
+	mux.HandleFunc("POST /api/setup/model", p.handleModelSetupAPI)
 	mux.HandleFunc("POST /api/setup/open-sharing-settings", p.handleOpenSharingSettingsAPI)
 	mux.HandleFunc("GET /files/{jobID}/{kind}", p.handleJobFile)
 	mux.HandleFunc("GET /files/{jobID}/pages/{page}/cleaned", p.handleJobPageImage)
@@ -251,6 +254,9 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	archiveExists, archiveError := archiveDirectoryStatus(p.cfg.Paths.ArchiveRoot)
+	if folders == nil {
+		folders = []string{}
+	}
 	response := dashboardResponse{
 		PaperRecommendations: classify.PaperRecommendations(p.cfg),
 		DatabaseBackup:       databaseBackups(p.cfg.Paths.ArchiveRoot),
@@ -266,6 +272,8 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 			ScannerShareChecked: share.Checked,
 			ScannerShareReady:   share.Shared,
 			Model:               p.cfg.LLM.Model,
+			ModelProvider:       p.cfg.LLM.Provider,
+			ModelEnabled:        p.cfg.LLM.Enabled,
 		},
 		Stats:      calculateDashboardStats(reviews, all),
 		Folders:    folders,

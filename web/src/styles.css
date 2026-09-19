@@ -219,6 +219,8 @@ button:disabled { cursor: default; opacity: .52; }
 .setup-wizard.required { border-color: var(--accent); box-shadow: 0 10px 35px rgba(32, 82, 66, .10); }
 .setup-step-number { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--dark); color: white; font-weight: 800; }
 .setup-step-copy { min-width: 0; }
+.model-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; }
+.model-choice select { max-width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); color: var(--ink); }
 .setup-step-copy h3 { margin: 3px 0 8px; }
 .setup-step-copy p { max-width: 760px; margin: 6px 0; color: var(--muted); line-height: 1.55; }
 .setup-step-copy code { display: block; overflow-wrap: anywhere; margin: 10px 0; padding: 10px 12px; border-radius: 12px; background: var(--warm); font-size: 12px; }

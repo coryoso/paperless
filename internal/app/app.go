@@ -9,6 +9,7 @@ import (
 	"paperless/internal/config"
 	"paperless/internal/db"
 	"paperless/internal/db/sqlc"
+	"paperless/internal/fm"
 	"paperless/internal/ocr"
 )
 
@@ -72,8 +73,15 @@ func Doctor(cfg config.Config) []Check {
 			ok, detail := ollamaModelDetail(cfg.LLM.Model, models)
 			checks = append(checks, Check{Name: "ollama.model." + cfg.LLM.Model, OK: ok, Detail: detail})
 		}
+	} else if cfg.LLM.Enabled && cfg.LLM.Provider == "fm" {
+		err := fm.Available(context.Background())
+		modelDetail := "Apple Foundation Models: on-device system model available"
+		if err != nil {
+			modelDetail = err.Error()
+		}
+		checks = append(checks, Check{Name: "fm.model.system", OK: err == nil, Detail: modelDetail})
 	} else {
-		checks = append(checks, Check{Name: "ollama", OK: true, Detail: "disabled"})
+		checks = append(checks, Check{Name: "llm", OK: !cfg.LLM.Enabled, Detail: "disabled or unsupported provider"})
 	}
 	for _, dir := range cfg.RuntimeDirs() {
 		checks = append(checks, Check{Name: "path", OK: exists(dir), Detail: dir})

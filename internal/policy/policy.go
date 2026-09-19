@@ -22,6 +22,9 @@ type Counter interface {
 
 func Evaluate(ctx context.Context, cfg config.Config, queries Counter, c classify.Classification) Decision {
 	reasons := []string{}
+	if c.ModelContextTruncated {
+		reasons = append(reasons, "model context was shortened; review the complete document")
+	}
 	if c.RecipientScope == "" || c.RecipientScope == "unknown" || c.RecipientNeedsReview || c.Recipient == "" {
 		reasons = append(reasons, "recipient identity or personal/business capacity needs review")
 	}

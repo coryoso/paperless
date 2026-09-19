@@ -215,7 +215,18 @@ func (c Config) Resolve() (Config, error) {
 	if c.LLM.Endpoint == "" {
 		c.LLM.Endpoint = "http://localhost:11434"
 	}
-	if c.LLM.Model == "" {
+	c.LLM.Provider = strings.ToLower(strings.TrimSpace(c.LLM.Provider))
+	if c.LLM.Provider == "" {
+		c.LLM.Provider = "ollama"
+	}
+	if c.LLM.Provider != "ollama" && c.LLM.Provider != "fm" {
+		return Config{}, fmt.Errorf("llm.provider must be ollama or fm")
+	}
+	if c.LLM.Provider == "fm" {
+		// fm exposes Apple's on-device model as system. Ignore any Ollama tag
+		// left in an existing configuration when only the provider is changed.
+		c.LLM.Model = "system"
+	} else if c.LLM.Model == "" || c.LLM.Model == "system" {
 		c.LLM.Model = "qwen3.5:9b-q4_K_M"
 	}
 	if c.LLM.TimeoutSeconds == 0 {
