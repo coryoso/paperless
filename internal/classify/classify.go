@@ -136,6 +136,8 @@ func ClassifyWithHistory(ctx context.Context, cfg config.Config, text, sourceFil
 		llm, err = classifyWithOllama(ctx, cfg, modelText, sourceFilename, scanDate, folders, base, reporter, examples...)
 	case "fm":
 		llm, err = classifyWithFM(ctx, cfg, modelText, sourceFilename, scanDate, folders, reporter, examples)
+	case "bonsai":
+		llm, err = classifyWithBonsai(ctx, cfg, modelText, sourceFilename, scanDate, folders, reporter, examples)
 	default:
 		err = fmt.Errorf("unsupported model provider %q", cfg.LLM.Provider)
 	}
@@ -239,7 +241,7 @@ func classifyWithOllama(ctx context.Context, cfg config.Config, text, sourceFile
 		snippet = snippet[:12_000]
 	}
 	schema := classificationJSONSchema(folders)
-	analysisPrompt := fmt.Sprintf(`Analyze this private document OCR for local filing. Focus on the grounded sender, addressee/recipient, document date, document type, sensitivity, useful filename subject, and best matching allowed folder. A retail receipt remains a receipt when it contains VAT, tax numbers, or tax breakdowns; those fields do not make it a tax letter. Do not invent facts. Keep the reasoning concise.
+	analysisPrompt := fmt.Sprintf(`Analyze this private document OCR for local filing. Focus on the grounded sender, addressee/recipient, document date, document type, sensitivity, useful filename subject, and best matching allowed folder. A retail receipt remains a receipt when it contains VAT, tax numbers, or tax breakdowns; those fields do not make it a tax letter. A request for payment with an invoice number and a payment due date is a routine-invoice; a receipt records a completed purchase or payment. Do not invent facts. Keep the reasoning concise.
 
 Allowed folders:
 %s
@@ -970,11 +972,11 @@ func inferDocumentType(text string) (string, bool, []string) {
 			return sensitive[key], true, []string{"sensitive hint: " + key}
 		}
 	}
-	if containsAny(lower, "quittung", "kassenbon", "receipt", "mwst", "vat", "total", "summe", "gesamt", "eur") {
-		return "receipt", false, []string{"receipt-like total/tax terms"}
-	}
 	if containsAny(lower, "rechnung", "invoice", "rechnungsnummer") {
 		return "routine-invoice", false, []string{"invoice terms found"}
+	}
+	if containsAny(lower, "quittung", "kassenbon", "receipt", "mwst", "vat", "total", "summe", "gesamt", "eur") {
+		return "receipt", false, []string{"receipt-like total/tax terms"}
 	}
 	if containsAny(lower, "lieferung", "delivery", "shipment", "paket") {
 		return "delivery-receipt", false, []string{"delivery terms found"}

@@ -38,6 +38,20 @@ func TestDeterministicReceiptClassification(t *testing.T) {
 	}
 }
 
+func TestInvoiceTotalsDoNotOverrideExplicitInvoiceType(t *testing.T) {
+	cfg := config.Default()
+	cfg.LLM.Enabled = false
+	for _, text := range []string{
+		"Northstar Office Supplies\nInvoice TEST-2026-0919\nVAT 19%\nTotal due EUR 59.50\nPayment due: 3 October 2026",
+		"Beispiel GmbH\nRechnungsnummer 12345\nMwSt 19%\nSumme EUR 59,50",
+	} {
+		result := Classify(t.Context(), cfg, text, "invoice.pdf", time.Now(), []string{"Invoices"})
+		if result.DocumentType != "routine-invoice" {
+			t.Fatalf("invoice classified as %s: %+v", result.DocumentType, result)
+		}
+	}
+}
+
 func TestReceiptTaxBreakdownDoesNotBecomeTaxLetter(t *testing.T) {
 	cfg := config.Default()
 	cfg.LLM.Enabled = false

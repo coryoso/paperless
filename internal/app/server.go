@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"paperless/internal/classify"
@@ -78,6 +79,7 @@ type dashboardSettings struct {
 	ArchiveExists       bool   `json:"archive_exists"`
 	ArchiveError        string `json:"archive_error"`
 	SetupRequired       bool   `json:"setup_required"`
+	SetupStep           string `json:"setup_step"`
 	ScannerShareChecked bool   `json:"scanner_share_checked"`
 	ScannerShareReady   bool   `json:"scanner_share_ready"`
 	Model               string `json:"model"`
@@ -193,6 +195,8 @@ func (p *Processor) serve(ctx context.Context) error {
 	mux.HandleFunc("POST /api/backups", p.handleDatabaseBackupAPI)
 	mux.HandleFunc("POST /api/setup/documents-directory", p.handleChooseDocumentsDirectoryAPI)
 	mux.HandleFunc("POST /api/setup/model", p.handleModelSetupAPI)
+	mux.HandleFunc("POST /api/setup/progress", p.handleSetupProgressAPI)
+	mux.HandleFunc("POST /api/setup/bonsai/install", p.handleBonsaiInstallAPI)
 	mux.HandleFunc("POST /api/setup/open-sharing-settings", p.handleOpenSharingSettingsAPI)
 	mux.HandleFunc("GET /files/{jobID}/{kind}", p.handleJobFile)
 	mux.HandleFunc("GET /files/{jobID}/pages/{page}/cleaned", p.handleJobPageImage)
@@ -200,10 +204,14 @@ func (p *Processor) serve(ctx context.Context) error {
 
 	addr := fmt.Sprintf("%s:%d", p.cfg.Service.Host, p.cfg.Service.Port)
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	var restarting atomic.Bool
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		select {
 		case <-workerCtx.Done():
 		case <-p.restart:
+			restarting.Store(true)
 		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -212,6 +220,10 @@ func (p *Processor) serve(ctx context.Context) error {
 	slog.Info("dashboard listening", "url", p.cfg.DashboardURL())
 	err := server.ListenAndServe()
 	if err == http.ErrServerClosed {
+		<-shutdownDone
+		if restarting.Load() {
+			return errRestartRequested
+		}
 		return nil
 	}
 	return err
@@ -268,10 +280,11 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 			ArchiveRoot:         p.cfg.Paths.ArchiveRoot,
 			ArchiveExists:       archiveExists,
 			ArchiveError:        archiveError,
-			SetupRequired:       strings.TrimSpace(p.cfg.Paths.ArchiveRoot) == "",
+			SetupRequired:       p.cfg.NeedsSetup(),
+			SetupStep:           p.cfg.SetupStep(),
 			ScannerShareChecked: share.Checked,
 			ScannerShareReady:   share.Shared,
-			Model:               p.cfg.LLM.Model,
+			Model:               p.cfg.ModelName(),
 			ModelProvider:       p.cfg.LLM.Provider,
 			ModelEnabled:        p.cfg.LLM.Enabled,
 		},
@@ -303,8 +316,8 @@ func (p *Processor) handleJobAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
-	if strings.TrimSpace(p.cfg.Paths.ArchiveRoot) == "" {
-		writeAPIError(w, errors.New("finish setup by choosing a base documents directory"), http.StatusConflict)
+	if p.cfg.NeedsSetup() {
+		writeAPIError(w, errors.New("finish the setup guide before uploading documents"), http.StatusConflict)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)

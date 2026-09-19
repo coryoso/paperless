@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"paperless/internal/bonsai"
 	"paperless/internal/config"
 	"paperless/internal/fm"
 	"paperless/internal/ocr"
@@ -36,6 +37,9 @@ func InstallRuntimeDependencies(ctx context.Context, cfg config.Config, stdout, 
 			return err
 		}
 		fmt.Fprintln(stdout, "Using Apple Foundation Models via fm; no Ollama download is needed.")
+	}
+	if cfg.LLM.Enabled && cfg.LLM.Provider == "bonsai" && runtime.GOOS != "darwin" {
+		return bonsai.Available(ctx, cfg.Bonsai)
 	}
 	if runtime.GOOS != "darwin" {
 		fmt.Fprintln(stdout, "Skipping Homebrew dependency install: macOS only.")
@@ -64,6 +68,13 @@ func InstallRuntimeDependencies(ctx context.Context, cfg config.Config, stdout, 
 		if err := ensureOllamaModel(ctx, cfg, stdout, stderr); err != nil {
 			return err
 		}
+	}
+	if cfg.LLM.Enabled && cfg.LLM.Provider == "bonsai" {
+		if err := bonsai.Available(ctx, cfg.Bonsai); err == nil {
+			fmt.Fprintln(stdout, "Using the configured Bonsai server.")
+			return nil
+		}
+		return bonsai.Install(ctx, cfg, stdout, stderr, nil)
 	}
 	return nil
 }

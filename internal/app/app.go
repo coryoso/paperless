@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
 
+	"paperless/internal/bonsai"
 	"paperless/internal/config"
 	"paperless/internal/db"
 	"paperless/internal/db/sqlc"
@@ -80,6 +82,13 @@ func Doctor(cfg config.Config) []Check {
 			modelDetail = err.Error()
 		}
 		checks = append(checks, Check{Name: "fm.model.system", OK: err == nil, Detail: modelDetail})
+	} else if cfg.LLM.Enabled && cfg.LLM.Provider == "bonsai" {
+		err := bonsai.Available(context.Background(), cfg.Bonsai)
+		modelDetail := cfg.Bonsai.Model + " available at " + cfg.Bonsai.Endpoint
+		if err != nil {
+			modelDetail = err.Error()
+		}
+		checks = append(checks, Check{Name: "bonsai.model." + cfg.Bonsai.Model, OK: err == nil, Detail: modelDetail})
 	} else {
 		checks = append(checks, Check{Name: "llm", OK: !cfg.LLM.Enabled, Detail: "disabled or unsupported provider"})
 	}
@@ -113,9 +122,29 @@ func exists(path string) bool {
 }
 
 func Serve(ctx context.Context, cfg config.Config, configPath string) error {
-	return serveDashboard(ctx, cfg, configPath)
+	return reloadOnSetupChanges(ctx, cfg, configPath, serveDashboard)
 }
 
 func Run(ctx context.Context, cfg config.Config, configPath string) error {
-	return runService(ctx, cfg, configPath)
+	return reloadOnSetupChanges(ctx, cfg, configPath, runService)
+}
+
+var errRestartRequested = errors.New("reload saved configuration")
+
+// Setup also works when launched from a terminal, without a service manager
+// restarting the process after every saved choice.
+func reloadOnSetupChanges(ctx context.Context, cfg config.Config, path string, run func(context.Context, config.Config, string) error) error {
+	for {
+		err := run(ctx, cfg, path)
+		if !errors.Is(err, errRestartRequested) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		cfg, err = config.Load(path)
+		if err != nil {
+			return err
+		}
+	}
 }

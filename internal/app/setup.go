@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"paperless/internal/bonsai"
 	"paperless/internal/config"
 	"paperless/internal/fm"
 )
@@ -117,7 +118,14 @@ func (p *Processor) handleChooseDocumentsDirectoryAPI(w http.ResponseWriter, r *
 		writeAPIError(w, err, http.StatusBadRequest)
 		return
 	}
-	cfg := p.cfg
+	cfg, err := config.Load(p.configPath)
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	if cfg.NeedsSetup() {
+		cfg.Setup.Step = "scanner"
+	}
 	cfg.Paths.ArchiveRoot = selected
 	if _, err := config.Write(p.configPath, cfg); err != nil {
 		writeAPIError(w, err, http.StatusInternalServerError)
@@ -149,6 +157,7 @@ func (p *Processor) handleModelSetupAPI(w http.ResponseWriter, r *http.Request) 
 	}
 	var input struct {
 		Provider string `json:"provider"`
+		Enabled  *bool  `json:"enabled"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
 	decoder.DisallowUnknownFields()
@@ -156,11 +165,16 @@ func (p *Processor) handleModelSetupAPI(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, err, http.StatusBadRequest)
 		return
 	}
-	if input.Provider != "ollama" && input.Provider != "fm" {
-		writeAPIError(w, errors.New("provider must be ollama or fm"), http.StatusBadRequest)
+	if p.modelInstallBusy.Load() {
+		writeAPIError(w, errors.New("wait for Bonsai installation to finish before changing models"), http.StatusConflict)
 		return
 	}
-	if input.Provider == "fm" {
+	if input.Provider != "ollama" && input.Provider != "fm" && input.Provider != "bonsai" {
+		writeAPIError(w, errors.New("provider must be ollama, fm, or bonsai"), http.StatusBadRequest)
+		return
+	}
+	enabled := input.Enabled == nil || *input.Enabled
+	if enabled && input.Provider == "fm" {
 		if err := fm.Available(r.Context()); err != nil {
 			writeAPIError(w, err, http.StatusBadRequest)
 			return
@@ -173,14 +187,174 @@ func (p *Processor) handleModelSetupAPI(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, err, http.StatusInternalServerError)
 		return
 	}
+	if cfg.NeedsSetup() && cfg.SetupStep() != "model" && cfg.SetupStep() != "ready" {
+		writeAPIError(w, errors.New("choose a documents folder and continue through the scanner step first"), http.StatusConflict)
+		return
+	}
 	cfg.LLM.Provider = input.Provider
-	cfg.LLM.Enabled = true
+	cfg.LLM.Enabled = enabled
+	if enabled && input.Provider == "bonsai" {
+		if err := bonsai.Available(r.Context(), cfg.Bonsai); err != nil {
+			writeAPIError(w, err, http.StatusBadRequest)
+			return
+		}
+	}
+	if cfg.NeedsSetup() {
+		if err := setupModelAvailable(r.Context(), cfg); err != nil {
+			writeAPIError(w, err, http.StatusBadRequest)
+			return
+		}
+		cfg.Setup.Step = "ready"
+	}
 	if _, err := config.Write(p.configPath, cfg); err != nil {
 		writeAPIError(w, err, http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"provider": input.Provider, "restarting": true})
 	p.requestRestart()
+}
+
+func setupModelAvailable(ctx context.Context, cfg config.Config) error {
+	if !cfg.LLM.Enabled {
+		return nil
+	}
+	switch cfg.LLM.Provider {
+	case "fm":
+		return fm.Available(ctx)
+	case "bonsai":
+		return bonsai.Available(ctx, cfg.Bonsai)
+	case "ollama":
+		models, err := ollamaModelList(ctx, cfg)
+		if err != nil {
+			return fmt.Errorf("start Ollama before continuing, or choose local rules for now: %w", err)
+		}
+		ok, detail := ollamaModelDetail(cfg.LLM.Model, models)
+		if !ok {
+			return errors.New(detail)
+		}
+		return nil
+	default:
+		return errors.New("choose a supported local model")
+	}
+}
+
+func (p *Processor) handleSetupProgressAPI(w http.ResponseWriter, r *http.Request) {
+	if !localRequest(r) {
+		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), http.StatusForbidden)
+		return
+	}
+	var input struct {
+		Step string `json:"step"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeAPIError(w, err, http.StatusBadRequest)
+		return
+	}
+	if p.modelInstallBusy.Load() {
+		writeAPIError(w, errors.New("wait for model installation to finish"), http.StatusConflict)
+		return
+	}
+	cfg, err := config.Load(p.configPath)
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	current := cfg.SetupStep()
+	switch input.Step {
+	case "model":
+		if current != "scanner" && current != "model" && current != "ready" {
+			writeAPIError(w, errors.New("choose a documents folder first"), http.StatusConflict)
+			return
+		}
+	case "complete":
+		if current != "ready" {
+			writeAPIError(w, errors.New("finish the model step before completing setup"), http.StatusConflict)
+			return
+		}
+		if _, err := validateDocumentsDirectory(cfg.Paths.ArchiveRoot); err != nil {
+			writeAPIError(w, err, http.StatusBadRequest)
+			return
+		}
+		if err := setupModelAvailable(r.Context(), cfg); err != nil {
+			writeAPIError(w, err, http.StatusBadRequest)
+			return
+		}
+	default:
+		writeAPIError(w, errors.New("setup step must be model or complete"), http.StatusBadRequest)
+		return
+	}
+	cfg.Setup.Step = input.Step
+	if _, err := config.Write(p.configPath, cfg); err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"step": input.Step, "restarting": true})
+	p.requestRestart()
+}
+
+// Installation streams stage updates while the large model downloads. The
+// provider is saved separately, only after installation and readiness succeed.
+func (p *Processor) handleBonsaiInstallAPI(w http.ResponseWriter, r *http.Request) {
+	if !localRequest(r) {
+		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), http.StatusForbidden)
+		return
+	}
+	// Require JSON so a cross-origin HTML form cannot trigger software installs.
+	if r.Header.Get("Content-Type") != "application/json" {
+		writeAPIError(w, errors.New("installation requires application/json"), http.StatusUnsupportedMediaType)
+		return
+	}
+	var input struct {
+		Install bool `json:"install"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || !input.Install {
+		writeAPIError(w, errors.New("installation requires install: true"), http.StatusBadRequest)
+		return
+	}
+	if !p.modelInstallBusy.CompareAndSwap(false, true) {
+		writeAPIError(w, errors.New("Bonsai installation is already running"), http.StatusConflict)
+		return
+	}
+	defer p.modelInstallBusy.Store(false)
+	cfg, err := config.Load(p.configPath)
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	if err := os.MkdirAll(cfg.Paths.StateDir, 0o700); err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	logPath := filepath.Join(cfg.Paths.StateDir, "bonsai-install.log")
+	log, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
+	defer log.Close()
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store")
+	encoder := json.NewEncoder(w)
+	send := func(value map[string]any) {
+		_ = encoder.Encode(value)
+		_ = http.NewResponseController(w).Flush()
+	}
+	install := p.modelInstaller
+	if install == nil {
+		install = bonsai.Install
+	}
+	err = install(r.Context(), cfg, log, log, func(message string) {
+		send(map[string]any{"message": message})
+	})
+	if err != nil {
+		send(map[string]any{"error": err.Error() + "; installation log: " + logPath})
+		return
+	}
+	send(map[string]any{"done": true})
 }
 
 func (p *Processor) handleOpenSharingSettingsAPI(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,6 @@
 # Paperless
 
-Paperless is a local-first document archive for macOS. It accepts scans and uploads, keeps the original document, cleans and straightens scanned pages, runs Tesseract OCR, creates a searchable PDF, and uses Ollama or Apple Foundation Models to suggest a filename and archive destination. Documents remain on the Mac or in a folder that is locally available through Finder.
+Paperless is a local-first document archive for macOS. It accepts scans and uploads, keeps the original document, cleans and straightens scanned pages, runs Tesseract OCR, creates a searchable PDF, and uses Ollama, Bonsai, or Apple Foundation Models to suggest a filename and archive destination. Documents remain on the Mac or in a folder that is locally available through Finder.
 
 ## Install with Homebrew
 
@@ -11,7 +11,7 @@ brew tap coryoso/homebrew https://github.com/coryoso/homebrew.git
 brew install coryoso/homebrew/paperless
 ```
 
-Paperless defaults to Ollama for local document classification. Skip the installation command if the Ollama app is already installed and running, or if you plan to select Apple Foundation Models in Setup.
+Paperless defaults to Ollama for local document classification. Skip the installation command if the Ollama app is already installed and running, or if you plan to select Bonsai or Apple Foundation Models in Setup.
 
 ```bash
 brew install ollama
@@ -31,9 +31,16 @@ paperless url
 open "$(paperless url)"
 ```
 
-The default is [http://127.0.0.1:8844](http://127.0.0.1:8844). On first launch, Paperless asks you to choose the base documents directory. This can be a normal local folder, a mounted SMB share, or a locally synced Dropbox, Google Drive, iCloud Drive, OneDrive, or similar folder. No provider or personal path is built into Paperless.
+The default is [http://127.0.0.1:8844](http://127.0.0.1:8844). On first launch, Paperless opens an in-app setup guide. The first step asks you to choose the base documents directory. This can be a normal local folder, a mounted SMB share, or a locally synced Dropbox, Google Drive, iCloud Drive, OneDrive, or similar folder. No provider or personal path is built into Paperless.
 
-The Setup screen then shows the scanner inbox, database location, backup status, model status, and the exact macOS SMB sharing steps. Paperless waits safely without processing files until the documents directory has been selected.
+The guide walks through four steps:
+
+1. **Documents:** choose your archive folder.
+2. **Scanner:** follow the macOS SMB sharing instructions, or skip this step and upload files instead.
+3. **Model:** choose Ollama, install Bonsai, use Apple Foundation Models, or continue with local rules and add AI later.
+4. **Ready:** review your choices and open your archive.
+
+Progress is saved between steps and resumes after a refresh or restart. Inbox processing and uploads stay paused until you finish the guide. Setup reloads work with both `paperless run` / `paperless serve` and background services. Existing configurations with a documents folder keep opening the archive directly; settings remain available from **Setup**.
 
 Upgrade and restart the service after a new stable release with:
 
@@ -118,9 +125,46 @@ fm available --model system
 
 For a new command-line setup, use `paperless configure --llm-provider fm` or `make setup LLM_PROVIDER=fm`. For an existing configuration, change `provider = "fm"` in the `[llm]` section of `~/.paperless/config.toml` and restart Paperless. The model resolves to `system`, even if an old Qwen tag remains in the file. `paperless doctor` checks the selected provider.
 
-Paperless calls `fm respond` directly, with document text passed through standard input and an enforced output schema. No `fm serve`, Ollama service, or Ollama model download is needed. The existing recipient, folder, filename, and retention policies still apply. Ollama-specific endpoint, context, reasoning, output, and keep-alive settings are ignored; `timeout_seconds` applies to both providers.
+Paperless calls `fm respond` directly, with document text passed through standard input and an enforced output schema. No `fm serve`, Ollama service, or Ollama model download is needed. The existing recipient, folder, filename, and retention policies still apply. Ollama-specific endpoint, context, reasoning, output, and keep-alive settings are ignored; `timeout_seconds` applies to all providers.
 
 Apple's on-device model has a smaller context window than the default Qwen configuration. Paperless counts tokens and shortens long document excerpts or filing context as needed; these documents always require review. A missing command, unavailable model, refusal, timeout, or invalid response falls back to local rules and is reported in processing progress. Select Ollama again in Setup to return to Qwen 3.5; a custom Ollama tag can be set through `llm.model` in the configuration.
+
+### Bonsai (PrismML)
+
+In **Setup → Choose your local model**, select **Bonsai · PrismML**, then **Install & use Bonsai 8B**. Keep the page open while installation runs. Paperless downloads the [Bonsai 8B 1-bit model](https://huggingface.co/prism-ml/Bonsai-8B-gguf) (about 1.16 GB) and PrismML's llama.cpp runtime, starts a local server, verifies readiness, and saves the provider. Interrupted model downloads resume when you retry. A failed installation leaves the selected provider unchanged.
+
+For a new command-line setup:
+
+```bash
+make setup LLM_PROVIDER=bonsai
+# Or, with an installed Paperless binary:
+paperless configure --llm-provider bonsai
+paperless init
+```
+
+Automatic installation requires macOS and the Command Line Tools (`git` and `curl`). It uses a pinned [Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) revision and verified model weights, stored under `<state_dir>/bonsai`. The installer downloads the text inference components; Python, MLX, Open WebUI, and the demo's code interpreter are not needed. The per-user LaunchAgent `com.paperless.bonsai` starts the server at login on `127.0.0.1:8080`. Installation and server logs are at `<state_dir>/bonsai-install.log` (browser installs) and `<state_dir>/bonsai/server.log`.
+
+To connect an existing Bonsai-demo llama.cpp server, set the following in your config and use **Save model** in Setup. Both a server root URL and a URL ending in `/v1` work. Set `model` to its exact `/v1/models` ID, or launch the upstream server with `--alias Bonsai-8B`. Other Bonsai families, including Bonsai 2, can use their own model ID here. Managed installation always installs Bonsai 8B at the default endpoint.
+
+```toml
+[llm]
+provider = "bonsai"
+
+[bonsai]
+endpoint = "http://127.0.0.1:8080"
+model = "Bonsai-8B"
+```
+
+Bonsai's configuration is separate from Ollama's `llm.endpoint` and `llm.model`, so switching between them preserves those settings. `llm.timeout_seconds` and `llm.max_output_tokens` control Bonsai requests; `llm.context_tokens` sets the managed server's context when installed. Bonsai uses constrained JSON with thinking disabled. Recipient, folder, filename, and retention policies still apply locally. Shortened document excerpts require review; unavailable servers or invalid results fall back to local rules. `paperless doctor` checks the selected server and model.
+
+For Bonsai 8B on the pinned runtime, launch an existing server with `--no-jinja` so structured JSON works with its non-thinking template. Managed installations include this flag automatically.
+
+The Bonsai service remains installed when switching providers. To stop it and prevent startup at login:
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.paperless.bonsai.plist"
+rm "$HOME/Library/LaunchAgents/com.paperless.bonsai.plist"
+```
 
 ### Command-line operations
 
@@ -136,7 +180,7 @@ Run `paperless help` for the complete command list.
 
 ## Development
 
-Building from source requires Go, Bun, the OCR/PDF tools, and either Ollama or an available Apple Foundation Models `fm` command. The Makefile is the main development entry point:
+Building from source requires Go, Bun, the OCR/PDF tools, and Ollama, Bonsai, or an available Apple Foundation Models `fm` command. The Makefile is the main development entry point:
 
 ```bash
 make help
@@ -144,7 +188,7 @@ make setup
 make run
 ```
 
-`make setup` builds Paperless, opens the native macOS folder chooser, writes the private user configuration, installs missing runtime dependencies, downloads the configured Ollama model (or checks `fm` for Apple Foundation Models), creates the SQLite database, and prepares the runtime folders.
+`make setup` builds Paperless, opens the native macOS folder chooser, writes the private user configuration, installs missing runtime dependencies, downloads the configured Ollama model, installs Bonsai, or checks `fm` for Apple Foundation Models, creates the SQLite database, and prepares the runtime folders.
 
 Use a disposable configuration for development or testing:
 
@@ -167,6 +211,12 @@ make test
 make web-test
 make acceptance FILE=/path/to/a/real-scan.pdf
 make check
+```
+
+To check real inference against a running Bonsai 8B server using a synthetic invoice:
+
+```bash
+PAPERLESS_BONSAI_TEST_ENDPOINT=http://127.0.0.1:8080 go test -count=1 ./internal/classify -run '^TestBonsaiLiveClassification$'
 ```
 
 The React dashboard is built with Bun and embedded into the Go binary. For frontend development, run the API and Bun development server separately:

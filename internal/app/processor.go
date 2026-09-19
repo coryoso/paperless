@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"paperless/internal/classify"
@@ -58,6 +59,8 @@ type Processor struct {
 	ocrSlots              chan struct{}
 	classificationSlots   chan struct{}
 	processOCR            func(context.Context, config.Config, string, string, progress.Reporter) (ocr.Result, error)
+	modelInstallBusy      atomic.Bool
+	modelInstaller        func(context.Context, config.Config, io.Writer, io.Writer, func(string)) error
 }
 
 type DryRunResult struct {
@@ -124,7 +127,7 @@ func newProcessorAtPath(ctx context.Context, cfg config.Config, configPath strin
 }
 
 func (p *Processor) ProcessInboxOnce(ctx context.Context) (int, error) {
-	if strings.TrimSpace(p.cfg.Paths.ArchiveRoot) == "" {
+	if p.cfg.NeedsSetup() {
 		return 0, nil
 	}
 	paths, err := p.candidateFiles()
@@ -202,7 +205,9 @@ func (p *Processor) processCreatedJob(ctx context.Context, jobID, inputPath stri
 
 func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, scanTime time.Time, forceReview bool, reporter progress.Reporter) error {
 	timestamp := time.Now().Format("20060102-150405")
-	sourceName := safePDFName(filepath.Base(inboxPath))
+	// Preserve the input format until OCR converts it to a searchable PDF.
+	// Renaming an image to .pdf makes the renderer send it to Poppler.
+	sourceName := safeInputName(filepath.Base(inboxPath))
 	reporter.Info("prepare", "raw", "Keeping an untouched raw copy.", 0, 0, 10)
 	rawPath := uniquePath(filepath.Join(p.cfg.Paths.Raw, timestamp+"__"+jobID[:8]+"__"+sourceName))
 	if err := copyFile(inboxPath, rawPath); err != nil {
@@ -924,6 +929,10 @@ func safePDFName(name string) string {
 		stem = "scan"
 	}
 	return stem + ".pdf"
+}
+
+func safeInputName(name string) string {
+	return strings.TrimSuffix(safePDFName(name), ".pdf") + strings.ToLower(filepath.Ext(name))
 }
 
 func safeFilenameStem(value string) string {

@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -135,5 +138,133 @@ func TestModelSetupRejectsInvalidOrUnavailableProviderWithoutSaving(t *testing.T
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("invalid setup wrote configuration: %v", err)
 		}
+	}
+}
+
+func TestBonsaiSetupChecksServerAndPreservesOllamaConfig(t *testing.T) {
+	ready := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/health" {
+			if !ready {
+				w.WriteHeader(503)
+				return
+			}
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"id":"Bonsai-8B"}]}`)
+	}))
+	defer server.Close()
+	cfg := config.Default()
+	cfg.Bonsai.Endpoint = server.URL
+	cfg.LLM.Model = "my-ollama"
+	cfg.Paths.ArchiveRoot = "/example/documents"
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if _, err := config.Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	p := &Processor{configPath: path, restart: make(chan struct{}, 1)}
+	for _, provider := range []string{"bonsai", "ollama"} {
+		r := httptest.NewRequest(http.MethodPost, "/api/setup/model", strings.NewReader(`{"provider":"`+provider+`"}`))
+		r.RemoteAddr = "127.0.0.1:1234"
+		w := httptest.NewRecorder()
+		p.handleModelSetupAPI(w, r)
+		if w.Code != 202 {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+		saved, err := config.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if saved.LLM.Provider != provider || saved.LLM.Model != "my-ollama" || saved.Bonsai.Endpoint != server.URL || saved.Paths.ArchiveRoot != cfg.Paths.ArchiveRoot {
+			t.Fatalf("config=%+v", saved)
+		}
+		select {
+		case <-p.restart:
+		case <-time.After(time.Second):
+			t.Fatal("no restart")
+		}
+	}
+	ready = false
+	r := httptest.NewRequest(http.MethodPost, "/api/setup/model", strings.NewReader(`{"provider":"bonsai"}`))
+	r.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+	p.handleModelSetupAPI(w, r)
+	if w.Code != 400 {
+		t.Fatalf("saved loading model: %d", w.Code)
+	}
+	saved, _ := config.Load(path)
+	if saved.LLM.Provider != "ollama" {
+		t.Fatal("failed switch changed saved provider")
+	}
+}
+
+func TestBonsaiInstallationStreamsProgressAndLeavesConfigUntilSaved(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Paths.StateDir = t.TempDir()
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if _, err := config.Write(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			p := &Processor{configPath: path, restart: make(chan struct{}, 1), modelInstaller: func(ctx context.Context, cfg config.Config, out, errout io.Writer, report func(string)) error {
+				report("Downloading model…")
+				if fail {
+					return errors.New("download failed")
+				}
+				return nil
+			}}
+			r := httptest.NewRequest(http.MethodPost, "/api/setup/bonsai/install", strings.NewReader(`{"install":true}`))
+			r.RemoteAddr = "127.0.0.1:1234"
+			r.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			p.handleBonsaiInstallAPI(w, r)
+			if w.Code != 200 || !strings.Contains(w.Body.String(), "Downloading model") {
+				t.Fatalf("response=%s", w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), `"done":true`) == fail || strings.Contains(w.Body.String(), `"error"`) != fail {
+				t.Fatalf("bad completion=%s", w.Body.String())
+			}
+			saved, _ := config.Load(path)
+			if saved.LLM.Provider != "ollama" {
+				t.Fatal("installation changed model before save")
+			}
+			if p.modelInstallBusy.Load() {
+				t.Fatal("busy flag leaked")
+			}
+			if len(p.restart) != 0 {
+				t.Fatal("installation restarted app before save")
+			}
+		})
+	}
+}
+
+func TestBonsaiInstallRejectsRemoteInvalidAndConcurrentRequests(t *testing.T) {
+	for _, tt := range []struct {
+		name, remote, body, contentType string
+		busy                            bool
+		status                          int
+	}{
+		{"remote", "192.168.1.4:1234", `{"install":true}`, "application/json", false, 403},
+		{"form", "127.0.0.1:1234", `{"install":true}`, "text/plain", false, 415},
+		{"invalid", "127.0.0.1:1234", `{}`, "application/json", false, 400},
+		{"busy", "127.0.0.1:1234", `{"install":true}`, "application/json", true, 409},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Processor{modelInstaller: func(context.Context, config.Config, io.Writer, io.Writer, func(string)) error {
+				t.Fatal("unexpected install")
+				return nil
+			}}
+			p.modelInstallBusy.Store(tt.busy)
+			r := httptest.NewRequest("POST", "/api/setup/bonsai/install", strings.NewReader(tt.body))
+			r.RemoteAddr = tt.remote
+			r.Header.Set("Content-Type", tt.contentType)
+			w := httptest.NewRecorder()
+			p.handleBonsaiInstallAPI(w, r)
+			if w.Code != tt.status {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+		})
 	}
 }

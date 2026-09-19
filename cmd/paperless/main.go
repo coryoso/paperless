@@ -52,7 +52,7 @@ func run(args []string) error {
 		archive := fs.String("archive", "", "base documents directory (local or locally synced)")
 		stateDir := fs.String("state-dir", "", "local state directory")
 		port := fs.Int("port", 0, "dashboard port (default 8844)")
-		provider := fs.String("llm-provider", "ollama", "local model provider: ollama or fm (Apple Foundation Models)")
+		provider := fs.String("llm-provider", "ollama", "local model provider: ollama, bonsai, or fm (Apple Foundation Models)")
 		if err := fs.Parse(commandArgs); err != nil {
 			return err
 		}
@@ -231,7 +231,7 @@ func usage() {
 
 Usage:
   paperless version
-  paperless [--config path] configure [--force] [--base path] [--inbox path] [--archive path] [--state-dir path] [--port number] [--llm-provider ollama|fm]
+  paperless [--config path] configure [--force] [--base path] [--inbox path] [--archive path] [--state-dir path] [--port number] [--llm-provider ollama|bonsai|fm]
   paperless [--config path] init [--skip-install]
   paperless [--config path] doctor
   paperless [--config path] backup

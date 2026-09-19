@@ -129,3 +129,61 @@ func TestResolveRejectsUnknownModelProvider(t *testing.T) {
 		t.Fatal("expected unknown provider error")
 	}
 }
+
+func TestBonsaiProviderPreservesOllamaSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := Default()
+	cfg.LLM.Endpoint = "http://localhost:11435"
+	cfg.LLM.Model = "custom-ollama-model"
+	cfg.LLM.Provider = "bonsai"
+	if _, err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Bonsai.Endpoint != DefaultBonsaiEndpoint || loaded.ModelName() != DefaultBonsaiModel || loaded.LLM.Endpoint != cfg.LLM.Endpoint || loaded.LLM.Model != cfg.LLM.Model {
+		t.Fatalf("config=%+v", loaded)
+	}
+	loaded.LLM.Provider = "ollama"
+	loaded, err = loaded.Resolve()
+	if err != nil || loaded.ModelName() != cfg.LLM.Model || loaded.LLM.Endpoint != cfg.LLM.Endpoint {
+		t.Fatalf("switch back=%+v, %v", loaded, err)
+	}
+}
+
+func TestFirstRunSetupProgressAndExistingConfigMigration(t *testing.T) {
+	cfg := Default()
+	if !cfg.NeedsSetup() || cfg.SetupStep() != "documents" {
+		t.Fatal("new install should start at documents")
+	}
+	cfg.Paths.ArchiveRoot = t.TempDir()
+	if cfg.NeedsSetup() {
+		t.Fatal("existing configured installs should not re-enter setup")
+	}
+	cfg.Setup.Step = "scanner"
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if _, err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.NeedsSetup() || saved.SetupStep() != "scanner" {
+		t.Fatalf("progress not preserved: %+v", saved.Setup)
+	}
+	cfg.Setup.Step = "complete"
+	if cfg.NeedsSetup() {
+		t.Fatal("completed setup should open archive")
+	}
+	cfg.Paths.ArchiveRoot = ""
+	if !cfg.NeedsSetup() {
+		t.Fatal("missing archive should re-enter setup")
+	}
+	cfg.Setup.Step = "typo"
+	if _, err := cfg.Resolve(); err == nil {
+		t.Fatal("invalid setup step accepted")
+	}
+}

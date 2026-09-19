@@ -72,6 +72,10 @@ func TestFMDoesNotRequireOllamaInstallation(t *testing.T) {
 	if missing := missingBrewFormulas(t.Context(), cfg); len(missing) != 0 {
 		t.Fatalf("FM should not install Ollama: %v", missing)
 	}
+	cfg.LLM.Provider = "bonsai"
+	if missing := missingBrewFormulas(t.Context(), cfg); len(missing) != 0 {
+		t.Fatalf("Bonsai should not install Ollama: %v", missing)
+	}
 	cfg.LLM.Provider = "ollama"
 	if missing := missingBrewFormulas(t.Context(), cfg); !slices.Contains(missing, "ollama") {
 		t.Fatalf("Ollama dependency check regressed: %v", missing)

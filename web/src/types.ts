@@ -56,10 +56,11 @@ export type Dashboard = {
     archive_exists: boolean;
     archive_error: string;
     setup_required: boolean;
+    setup_step: "documents" | "scanner" | "model" | "ready" | "complete";
     scanner_share_checked: boolean;
     scanner_share_ready: boolean;
     model: string;
-    model_provider: "ollama" | "fm";
+    model_provider: "ollama" | "fm" | "bonsai";
     model_enabled: boolean;
   };
   stats: {

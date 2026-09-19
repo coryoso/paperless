@@ -18,6 +18,8 @@ type Config struct {
 	Service           Service            `toml:"service"`
 	OCR               OCR                `toml:"ocr"`
 	LLM               LLM                `toml:"llm"`
+	Bonsai            Bonsai             `toml:"bonsai"`
+	Setup             Setup              `toml:"setup"`
 	Policy            Policy             `toml:"policy"`
 	SenderFolders     map[string]string  `toml:"sender_folders"`
 	RecipientProfiles []RecipientProfile `toml:"recipient_profiles"`
@@ -71,6 +73,34 @@ type LLM struct {
 	MaxOutputTokens int    `toml:"max_output_tokens"`
 	KeepAlive       string `toml:"keep_alive"`
 }
+
+const DefaultBonsaiEndpoint = "http://127.0.0.1:8080"
+const DefaultBonsaiModel = "Bonsai-8B"
+
+// Bonsai keeps its server settings separate so selecting it preserves Ollama's
+// endpoint and model. Shared inference limits remain in LLM.
+type Bonsai struct {
+	Endpoint string `toml:"endpoint"`
+	Model    string `toml:"model"`
+}
+
+type Setup struct {
+	Step string `toml:"step"`
+}
+
+// Older configurations with a documents folder are already set up. New
+// installations enter the guide without forcing existing users through it.
+func (c Config) SetupStep() string {
+	if strings.TrimSpace(c.Paths.ArchiveRoot) == "" {
+		return "documents"
+	}
+	if c.Setup.Step == "" {
+		return "complete"
+	}
+	return c.Setup.Step
+}
+
+func (c Config) NeedsSetup() bool { return c.SetupStep() != "complete" }
 
 type Policy struct {
 	AutoFileMinConfidence   int      `toml:"auto_file_min_confidence"`
@@ -127,6 +157,7 @@ func Default() Config {
 			MaxOutputTokens: 2_048,
 			KeepAlive:       "0",
 		},
+		Bonsai: Bonsai{Endpoint: DefaultBonsaiEndpoint, Model: DefaultBonsaiModel},
 		Policy: Policy{
 			AutoFileMinConfidence:   92,
 			MinApprovedExamples:     2,
@@ -219,8 +250,8 @@ func (c Config) Resolve() (Config, error) {
 	if c.LLM.Provider == "" {
 		c.LLM.Provider = "ollama"
 	}
-	if c.LLM.Provider != "ollama" && c.LLM.Provider != "fm" {
-		return Config{}, fmt.Errorf("llm.provider must be ollama or fm")
+	if c.LLM.Provider != "ollama" && c.LLM.Provider != "fm" && c.LLM.Provider != "bonsai" {
+		return Config{}, fmt.Errorf("llm.provider must be ollama, fm, or bonsai")
 	}
 	if c.LLM.Provider == "fm" {
 		// fm exposes Apple's on-device model as system. Ignore any Ollama tag
@@ -244,7 +275,25 @@ func (c Config) Resolve() (Config, error) {
 	if c.LLM.KeepAlive == "" {
 		c.LLM.KeepAlive = "0"
 	}
+	if c.Bonsai.Endpoint == "" {
+		c.Bonsai.Endpoint = DefaultBonsaiEndpoint
+	}
+	if c.Bonsai.Model == "" {
+		c.Bonsai.Model = DefaultBonsaiModel
+	}
+	switch c.Setup.Step {
+	case "", "documents", "scanner", "model", "ready", "complete":
+	default:
+		return Config{}, fmt.Errorf("invalid setup.step %q", c.Setup.Step)
+	}
 	return c, nil
+}
+
+func (c Config) ModelName() string {
+	if c.LLM.Provider == "bonsai" {
+		return c.Bonsai.Model
+	}
+	return c.LLM.Model
 }
 
 // DashboardURL returns the browser-facing URL for the configured service.

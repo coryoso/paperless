@@ -25,6 +25,7 @@ import { api } from "./api";
 import { documentTypes, recipientScopes, replaceFilenameDocumentType, savedRecipientChoice, learnedAlias } from "./review";
 import { FolderPicker } from "./FolderPicker";
 import { TextPreview } from "./TextPreview";
+import { SetupGuide } from "./SetupGuide";
 import { RecipientSettings } from "./RecipientSettings";
 import type { Dashboard, Job, OCRPage, ProgressEvent, RecipientProfile, TextLayout } from "./types";
 import { formatFileSize, isProcessingStatus, supportedDocuments } from "./upload";
@@ -54,6 +55,7 @@ const emptyDashboard: Dashboard = {
     archive_exists: false,
     archive_error: "",
     setup_required: true,
+    setup_step: "documents",
     scanner_share_checked: false,
     scanner_share_ready: false,
     model: "",
@@ -174,7 +176,7 @@ function App() {
   };
 
   return (
-    <div className={`app-shell${view === "overview" ? "" : " workspace-shell"}`}>
+    <div className={`app-shell${dashboard.settings.setup_required ? " onboarding-shell" : view === "overview" ? "" : " workspace-shell"}`}>
       <header className="masthead">
         <div className="masthead-inner">
           <div className="brand-row">
@@ -210,7 +212,7 @@ function App() {
       <main className="main">
         {error && <div className="error-banner"><CircleAlert /> <span>{error}</span><button className="icon-button" onClick={() => setError("")} title="Dismiss"><X /></button></div>}
         {loading ? <LoadingState /> : null}
-        {!loading && dashboard.settings.setup_required && <Setup dashboard={dashboard} onRefresh={load} />}
+        {!loading && dashboard.settings.setup_required && <SetupGuide dashboard={dashboard} onRefresh={load} onComplete={() => setView("overview")} />}
         {!loading && !dashboard.settings.setup_required && view === "overview" && <Overview dashboard={dashboard} onOpenJob={openJob} onOpenReview={() => setView("review")} />}
         {!loading && !dashboard.settings.setup_required && view === "processing" && (
           <ProcessingWorkspace
@@ -614,14 +616,23 @@ function Setup({ dashboard, onRefresh }: { dashboard: Dashboard; onRefresh: () =
   const [backingUp, setBackingUp] = useState(false);
   const [modelProvider, setModelProvider] = useState(dashboard.settings.model_provider);
   const [savingModel, setSavingModel] = useState(false);
-  const saveModel = async () => {
+  const [installingModel, setInstallingModel] = useState(false);
+  const [installProgress, setInstallProgress] = useState("");
+  const saveModel = async (install = false) => {
     setSavingModel(true); setSetupError("");
     try {
+      if (install) {
+        setInstallingModel(true);
+        setInstallProgress("Preparing Bonsai installation…");
+        await api.installBonsai(setInstallProgress);
+      }
       await api.setModelProvider(modelProvider);
       setRestarting(true);
       window.setTimeout(() => window.location.reload(), 1500);
     } catch (reason) {
       setSetupError(errorMessage(reason)); setSavingModel(false);
+    } finally {
+      setInstallingModel(false);
     }
   };
   const chooseDirectory = async () => {
@@ -648,7 +659,7 @@ function Setup({ dashboard, onRefresh }: { dashboard: Dashboard; onRefresh: () =
     <section className={dashboard.settings.setup_required ? "setup-wizard required" : "setup-wizard"}>
       <div className="setup-step-number">1</div>
       <div className="setup-step-copy"><h3>Choose your base documents directory</h3><p>Choose an existing folder on this Mac. It can be an ordinary local folder or a locally available Dropbox, Google Drive, iCloud Drive, OneDrive, or mounted file-server folder.</p><p>Paperless files completed documents below this directory. Its live SQLite database remains in local Application Support so a sync client cannot corrupt it. Consistent database snapshots are stored in a hidden backup folder below the selected directory.</p>{dashboard.settings.archive_root && <code>{dashboard.settings.archive_root}</code>}{dashboard.database_backup?.directory && <p>{dashboard.database_backup.count ? `${dashboard.database_backup.count} database backup${dashboard.database_backup.count === 1 ? "" : "s"} · latest ${dashboard.database_backup.latest}` : "The first database backup will be created after startup."} <button className="text-button" disabled={backingUp} onClick={backupNow}>{backingUp ? "Backing up…" : "Back up now"}</button></p>}{dashboard.settings.archive_error && !dashboard.settings.setup_required && <div className="inline-error">{dashboard.settings.archive_error}</div>}</div>
-      <button className="primary-button" disabled={choosing || restarting} onClick={chooseDirectory}><FolderOpen /> {restarting ? "Restarting Paperless…" : choosing ? "Opening folder chooser…" : dashboard.settings.archive_root ? "Choose another folder" : "Choose documents folder"}</button>
+      <button className="primary-button" disabled={choosing || savingModel || restarting} onClick={chooseDirectory}><FolderOpen /> {restarting ? "Restarting Paperless…" : choosing ? "Opening folder chooser…" : dashboard.settings.archive_root ? "Choose another folder" : "Choose documents folder"}</button>
     </section>
     <section className="setup-wizard">
       <div className="setup-step-number">2</div>
@@ -657,11 +668,11 @@ function Setup({ dashboard, onRefresh }: { dashboard: Dashboard; onRefresh: () =
     </section>
     <section className="setup-wizard">
       <div className="setup-step-number">3</div>
-      <div className="setup-step-copy"><h3>Choose your local model</h3><p>Both options process documents on this Mac.</p><label className="model-choice"><span>Model provider</span><select value={modelProvider} disabled={savingModel || restarting} onChange={(event) => setModelProvider(event.target.value as "ollama" | "fm")}><option value="ollama">Ollama · Qwen 3.5</option><option value="fm">Apple Foundation Models</option></select></label><p>{modelProvider === "fm" ? "Uses Apple Intelligence through the fm command. No separate model download or server is needed. Documents that exceed its context limit require review." : "Uses your configured Ollama model. Ollama must be running with the model installed."}</p><p>Saving restarts Paperless. Wait for active uploads to finish first.</p></div>
-      <button className="primary-button" disabled={savingModel || restarting || (modelProvider === dashboard.settings.model_provider && dashboard.settings.model_enabled)} onClick={saveModel}>{restarting ? "Restarting Paperless…" : savingModel ? "Checking model…" : "Save model"}</button>
+      <div className="setup-step-copy"><h3>Choose your local model</h3><p>Choose a model to process documents locally.</p><label className="model-choice"><span>Model provider</span><select value={modelProvider} disabled={savingModel || restarting} onChange={(event) => setModelProvider(event.target.value as "ollama" | "fm" | "bonsai")}><option value="ollama">Ollama · Qwen 3.5</option><option value="fm">Apple Foundation Models</option><option value="bonsai">Bonsai · PrismML</option></select></label><p>{modelProvider === "fm" ? "Uses Apple Intelligence through the fm command. No separate model download or server is needed. Documents that exceed its context limit require review." : modelProvider === "bonsai" ? "Install Bonsai 8B (1-bit) and its local server, or save an existing Bonsai server. Installation downloads about 1.16 GB of model weights plus the runtime and starts the server automatically at login. Keep this page open during installation." : "Uses your configured Ollama model. Ollama must be running with the model installed."}</p>{modelProvider === "bonsai" && <p><button className="icon-text-button" disabled={savingModel || restarting} onClick={() => saveModel(true)}>{installingModel ? "Installing Bonsai…" : "Install & use Bonsai 8B"}</button></p>}{installProgress && <p role="status" aria-live="polite">{installProgress}</p>}<p>Saving restarts Paperless. Wait for active uploads to finish first.</p></div>
+      <button className="primary-button" disabled={savingModel || restarting || (modelProvider === dashboard.settings.model_provider && dashboard.settings.model_enabled)} onClick={() => saveModel()}>{restarting ? "Restarting Paperless…" : savingModel ? "Checking model…" : "Save model"}</button>
     </section>
     {setupError && <div className="form-error" role="alert">{setupError}</div>}
-    <div className="setup-rows"><SetupRow icon={<Inbox />} title="Scanner inbox" value={dashboard.settings.inbox} state={dashboard.settings.scanner_share_ready ? "SMB ready" : "SMB setup needed"} ok={dashboard.settings.scanner_share_ready} /><SetupRow icon={<Archive />} title="Documents directory" value={dashboard.settings.archive_root || "Not selected"} state={dashboard.settings.archive_exists ? "Connected" : dashboard.settings.setup_required ? "Selection required" : "Unavailable"} ok={dashboard.settings.archive_exists} /><SetupRow icon={<FileSearch />} title="Local model" value={dashboard.settings.model_enabled ? dashboard.settings.model_provider === "fm" ? "Apple Foundation Models · system" : `Ollama · ${dashboard.settings.model}` : "Local rules only"} state={dashboard.settings.model_enabled ? "Configured" : "Disabled"} ok={dashboard.settings.model_enabled} /></div>
+    <div className="setup-rows"><SetupRow icon={<Inbox />} title="Scanner inbox" value={dashboard.settings.inbox} state={dashboard.settings.scanner_share_ready ? "SMB ready" : "SMB setup needed"} ok={dashboard.settings.scanner_share_ready} /><SetupRow icon={<Archive />} title="Documents directory" value={dashboard.settings.archive_root || "Not selected"} state={dashboard.settings.archive_exists ? "Connected" : dashboard.settings.setup_required ? "Selection required" : "Unavailable"} ok={dashboard.settings.archive_exists} /><SetupRow icon={<FileSearch />} title="Local model" value={dashboard.settings.model_enabled ? dashboard.settings.model_provider === "fm" ? "Apple Foundation Models · system" : `${dashboard.settings.model_provider === "bonsai" ? "Bonsai" : "Ollama"} · ${dashboard.settings.model}` : "Local rules only"} state={dashboard.settings.model_enabled ? "Configured" : "Disabled"} ok={dashboard.settings.model_enabled} /></div>
     {!dashboard.settings.setup_required && <><RecipientSettings dashboard={dashboard} onRefresh={onRefresh} /><section className="folder-browser"><div><span className="eyebrow">Document folders</span><h3>{dashboard.folders.length} available destinations</h3></div><button className="icon-text-button" disabled={refreshing} onClick={async () => { setRefreshing(true); await api.refreshFolders(); await onRefresh(); setRefreshing(false); }}><RefreshCw className={refreshing ? "spin" : ""} /> Refresh</button><div className="folder-grid">{dashboard.folders.map((folder) => <span key={folder}><FolderArchive /> {folder}</span>)}</div></section></>}
   </section>;
 }

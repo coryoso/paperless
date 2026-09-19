@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,56 @@ import (
 	"paperless/internal/ocr"
 	"paperless/internal/progress"
 )
+
+func TestIngestionPreservesInputFormatUntilOCR(t *testing.T) {
+	for _, extension := range []string{".png", ".jpg", ".JPEG", ".pdf"} {
+		t.Run(extension, func(t *testing.T) {
+			cfg := testServerConfig(t.TempDir())
+			cfg.LLM.Enabled = false
+			p, cleanup, err := newProcessor(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			input := filepath.Join(cfg.Paths.Inbox, "My Scan"+extension)
+			original := []byte("original input bytes")
+			if err := os.WriteFile(input, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			p.processOCR = func(_ context.Context, _ config.Config, input, workDir string, _ progress.Reporter) (ocr.Result, error) {
+				if filepath.Ext(input) != strings.ToLower(extension) {
+					return ocr.Result{}, fmt.Errorf("input format changed before OCR: %s", input)
+				}
+				if err := os.MkdirAll(workDir, 0700); err != nil {
+					return ocr.Result{}, err
+				}
+				pdf, txt := filepath.Join(workDir, "searchable.pdf"), filepath.Join(workDir, "ocr.txt")
+				if err := os.WriteFile(pdf, []byte("converted PDF"), 0600); err != nil {
+					return ocr.Result{}, err
+				}
+				if err := os.WriteFile(txt, []byte("Merchant invoice"), 0600); err != nil {
+					return ocr.Result{}, err
+				}
+				return ocr.Result{SearchablePDF: pdf, TextPath: txt, Text: "Merchant invoice", PageCount: 1}, nil
+			}
+			id, err := p.ProcessUploadedFile(t.Context(), "", input, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, err := p.store.Queries.GetJob(t.Context(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if job.Status != StatusNeedsReview || filepath.Ext(job.CurrentPath) != ".pdf" || filepath.Ext(job.RawPath) != strings.ToLower(extension) {
+				t.Fatalf("unexpected pipeline artifacts: %+v", job)
+			}
+			raw, err := os.ReadFile(job.RawPath)
+			if err != nil || string(raw) != string(original) {
+				t.Fatalf("original input was not preserved: %q, %v", raw, err)
+			}
+		})
+	}
+}
 
 func TestUploadQueueOverlapsOCRBeforeClassification(t *testing.T) {
 	cfg := testServerConfig(t.TempDir())

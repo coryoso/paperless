@@ -1,0 +1,90 @@
+package classify
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	"paperless/internal/config"
+	"paperless/internal/progress"
+)
+
+const bonsaiTestResponse = `{"document_type":"tax-letter","sender":"Finanzamt","recipient":"Alex Example","recipient_type":"person","recipient_scope":"personal","recipient_evidence":"Herrn Alex Example","document_date":"2026-02-25","summary":"Tax notice","suggested_folder":"Tax/2026","suggested_filename":"tax.pdf","physical_original_action":"discard_candidate","confidence":0.95,"reasons":["Personal tax notice"],"sensitive":false,"folder_rankings":[]}`
+
+func TestBonsaiLiveClassification(t *testing.T) {
+	endpoint := os.Getenv("PAPERLESS_BONSAI_TEST_ENDPOINT")
+	if endpoint == "" {
+		t.Skip("set PAPERLESS_BONSAI_TEST_ENDPOINT to test a running Bonsai-8B server")
+	}
+	cfg := config.Default()
+	cfg.LLM.Provider = "bonsai"
+	cfg.Bonsai.Endpoint = endpoint
+	text := "Northstar Office Supplies\nInvoice TEST-2026-0919\nInvoice date: 19 September 2026\nCustomer: Alex Example\n10 notebooks: EUR 40.00\n5 pens: EUR 10.00\nVAT (19%): EUR 9.50\nTotal due: EUR 59.50\nPayment due: 3 October 2026"
+	result := Classify(t.Context(), cfg, text, "invoice.pdf", time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC), []string{"Invoices"})
+	if result.Source != "bonsai" || result.DocumentType != "routine-invoice" || !strings.Contains(result.Sender, "northstar") || result.DocumentDate != "2026-09-19" || result.SuggestedFolder != "Invoices" {
+		t.Fatalf("live classification = %+v", result)
+	}
+}
+
+func TestBonsaiClassificationPreservesLocalPoliciesAndContext(t *testing.T) {
+	var prompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct{ Messages []struct{ Content string } }
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		prompt = request.Messages[1].Content
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": bonsaiTestResponse}, "finish_reason": "stop"}}})
+	}))
+	defer server.Close()
+	cfg := config.Default()
+	cfg.LLM.Provider = "bonsai"
+	cfg.Bonsai.Endpoint = server.URL
+	cfg.RecipientProfiles = []config.RecipientProfile{{Name: "Alex Example", Scope: "personal", Aliases: []string{"A. Example"}, FolderPrefix: "Tax"}}
+	text := "Finanzamt\nHerrn Alex Example\n25.02.2026\nEinkommensteuerbescheid"
+	var events []progress.Event
+	result := ClassifyWithHistory(t.Context(), cfg, text, "scan.pdf", time.Now(), []string{"Tax/2026"}, nil, func(e progress.Event) { events = append(events, e) }, "# Letter\n"+text)
+	if result.Source != "bonsai" || result.PhysicalOriginalAction != "keep_original" || result.RecipientScope != "personal" || result.SuggestedFolder != "Tax/2026" {
+		t.Fatalf("result=%+v", result)
+	}
+	if !strings.HasPrefix(result.SuggestedFilename, "2026-02-25__finanzamt__tax-letter") {
+		t.Fatalf("filename=%s", result.SuggestedFilename)
+	}
+	if !strings.Contains(prompt, "# Letter") || !strings.Contains(prompt, "A. Example") {
+		t.Fatalf("prompt=%s", prompt)
+	}
+	for _, e := range events {
+		if strings.Contains(e.Message, "Ollama") {
+			t.Fatalf("wrong provider: %s", e.Message)
+		}
+	}
+	result = Classify(t.Context(), cfg, strings.Repeat("Grüße 漢字 ", 2000), "long.pdf", time.Now(), []string{"Tax/2026"})
+	if !result.ModelContextTruncated || !utf8.ValidString(prompt) {
+		t.Fatal("long context not marked for review or invalid UTF8")
+	}
+}
+
+func TestBonsaiFailuresFallBackToRules(t *testing.T) {
+	for _, body := range []string{"not json", "{}", "null", strings.Replace(bonsaiTestResponse, `"personal"`, `"made-up"`, 1), strings.Replace(bonsaiTestResponse, `"Tax/2026"`, `"../../escape"`, 1)} {
+		t.Run(body[:min(len(body), 20)], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				payload, _ := json.Marshal(body)
+				fmt.Fprintf(w, `{"choices":[{"message":{"content":%s},"finish_reason":"stop"}]}`, payload)
+			}))
+			defer server.Close()
+			cfg := config.Default()
+			cfg.LLM.Provider = "bonsai"
+			cfg.Bonsai.Endpoint = server.URL
+			result := Classify(t.Context(), cfg, strings.Repeat("REWE Kassenbon EUR 12 ", 1000), "scan.pdf", time.Now(), []string{"Tax/2026"})
+			if result.Source != "rules" || !result.ModelContextTruncated || !strings.Contains(strings.Join(result.Reasons, " "), "bonsai unavailable or invalid") {
+				t.Fatalf("result=%+v", result)
+			}
+		})
+	}
+}
