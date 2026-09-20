@@ -11,6 +11,7 @@ import (
 	"paperless/internal/config"
 	"paperless/internal/db"
 	"paperless/internal/db/sqlc"
+	"paperless/internal/embeddings"
 	"paperless/internal/fm"
 	"paperless/internal/ocr"
 )
@@ -91,6 +92,14 @@ func Doctor(cfg config.Config) []Check {
 		checks = append(checks, Check{Name: "bonsai.model." + cfg.Bonsai.Model, OK: err == nil, Detail: modelDetail})
 	} else {
 		checks = append(checks, Check{Name: "llm", OK: !cfg.LLM.Enabled, Detail: "disabled or unsupported provider"})
+	}
+	if cfg.Embeddings.Enabled {
+		_, err := (embeddings.Client{Config: cfg.Embeddings}).Identity(context.Background())
+		modelDetail := cfg.Embeddings.Model + " at " + cfg.Embeddings.Endpoint
+		if err != nil {
+			modelDetail = err.Error()
+		}
+		checks = append(checks, Check{Name: "embeddings.model." + cfg.Embeddings.Model, OK: err == nil, Detail: modelDetail})
 	}
 	for _, dir := range cfg.RuntimeDirs() {
 		checks = append(checks, Check{Name: "path", OK: exists(dir), Detail: dir})

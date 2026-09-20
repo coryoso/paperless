@@ -54,13 +54,13 @@ jobs:
               -ldflags="-s -w -X main.version=${version}" \
               -o "dist/${package}/paperless" \
               ./cmd/paperless
-            cp README.md config.example.toml "dist/${package}/"
+            cp README.md config.example.toml THIRD_PARTY_NOTICES.md "dist/${package}/"
           done
           package="paperless_${version}_darwin_all"
           mkdir -p "dist/${package}"
           cp "dist/paperless_${version}_darwin_arm64/paperless" "dist/${package}/paperless-arm64"
           cp "dist/paperless_${version}_darwin_amd64/paperless" "dist/${package}/paperless-amd64"
-          cp README.md config.example.toml "dist/${package}/"
+          cp README.md config.example.toml THIRD_PARTY_NOTICES.md "dist/${package}/"
 
       - name: Sign macOS binaries
         id: signing

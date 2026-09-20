@@ -45,7 +45,28 @@ export type Job = {
   };
 };
 
+export type SimilarityResult = {
+  status: "disabled" | "indexing" | "ready" | "unavailable" | "no_text";
+  message: string;
+  matches: {
+    job_id: string;
+    filename: string;
+    folder: string;
+    recipient: string;
+    recipient_scope: string;
+    document_type: string;
+    excerpt: string;
+    query_excerpt: string;
+  }[];
+};
+
 export type Dashboard = {
+  similarity?: {
+    status: string;
+    message: string;
+    indexed: number;
+    skipped: number;
+  };
   paper_recommendations?: Record<string, string>;
   database_backup?: {
     directory: string;
@@ -58,6 +79,9 @@ export type Dashboard = {
   learning_count?: number;
   learning_path?: string;
   settings: {
+    embeddings_enabled?: boolean;
+    embedding_model?: string;
+    embedding_endpoint?: string;
     inbox: string;
     archive_root: string;
     archive_exists: boolean;

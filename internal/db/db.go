@@ -14,6 +14,7 @@ import (
 	"paperless/internal/db/sqlc"
 
 	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite/vec"
 )
 
 //go:embed migrations/*.sql
