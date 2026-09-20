@@ -4,6 +4,21 @@
 
 package sqlc
 
+type DocumentEmbedding struct {
+	JobID       string `json:"job_id"`
+	ContentHash string `json:"content_hash"`
+	ModelKey    string `json:"model_key"`
+	Dimensions  int64  `json:"dimensions"`
+	IndexedAt   string `json:"indexed_at"`
+}
+
+type EmbeddingChunk struct {
+	JobID   string `json:"job_id"`
+	Ordinal int64  `json:"ordinal"`
+	Excerpt string `json:"excerpt"`
+	Vector  []byte `json:"vector"`
+}
+
 type Event struct {
 	ID        int64  `json:"id"`
 	JobID     string `json:"job_id"`

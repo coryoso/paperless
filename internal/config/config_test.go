@@ -187,3 +187,25 @@ func TestFirstRunSetupProgressAndExistingConfigMigration(t *testing.T) {
 		t.Fatal("invalid setup step accepted")
 	}
 }
+
+func TestEmbeddingEndpointStaysLocal(t *testing.T) {
+	for _, endpoint := range []string{"https://example.com", "http://192.168.1.2:11434", "http://localhost@example.com", "http://127.0.0.1:11434/forward", "http://localhost:11434?url=remote"} {
+		cfg := Default()
+		cfg.Embeddings.Endpoint = endpoint
+		if _, err := cfg.Resolve(); err == nil {
+			t.Fatalf("accepted %q", endpoint)
+		}
+	}
+	for _, endpoint := range []string{"http://localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434"} {
+		cfg := Default()
+		cfg.Embeddings.Endpoint = endpoint
+		cfg.LLM.Provider = "fm"
+		got, err := cfg.Resolve()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Embeddings.Endpoint != endpoint || got.LLM.Provider != "fm" {
+			t.Fatal("embedding config changed classification")
+		}
+	}
+}

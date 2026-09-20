@@ -32,6 +32,8 @@ import {
 import { FolderPicker } from "./FolderPicker";
 import { TextPreview } from "./TextPreview";
 import { SetupGuide } from "./SetupGuide";
+import { SimilarDocuments } from "./SimilarDocuments";
+import { EmbeddingSettings } from "./EmbeddingSettings";
 import { RecipientSettings } from "./RecipientSettings";
 import type {
   Dashboard,
@@ -1244,6 +1246,7 @@ function JobDetail({
           {classification.recipient_address.replace(/\n/g, ", ")}
         </p>
       )}
+      {review && job.status === "needs_review" && <SimilarDocuments key={job.id} jobID={job.id} />}
       {review && job.status === "needs_review" && (
         <section className="routing-form">
           <div className="route-head">
@@ -1821,6 +1824,7 @@ function Setup({
               : "Save model"}
         </button>
       </section>
+      {!dashboard.settings.setup_required && <EmbeddingSettings dashboard={dashboard} onRefresh={onRefresh} />}
       {setupError && (
         <div className="form-error" role="alert">
           {setupError}

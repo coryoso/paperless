@@ -1,4 +1,4 @@
-import type { Dashboard, OCRPage, RecipientProfile, TextLayout } from "./types";
+import type { Dashboard, SimilarityResult, OCRPage, RecipientProfile, TextLayout } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -16,6 +16,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  similar: (jobID: string, signal?: AbortSignal) => request<SimilarityResult>(`/api/jobs/${encodeURIComponent(jobID)}/similar`, { signal }),
+  setEmbeddings: (data: { enabled: boolean; model: string; endpoint: string }) => request<{ restarting: boolean }>("/api/setup/embeddings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
   setModelProvider: (provider: "ollama" | "fm" | "bonsai", enabled?: boolean) =>
     request<{ provider: string; restarting: boolean }>("/api/setup/model", {
       method: "POST",

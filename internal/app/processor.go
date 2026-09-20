@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,6 +49,9 @@ var supportedInputs = map[string]bool{
 }
 
 type Processor struct {
+	similarityMu          sync.RWMutex
+	similarity            similarityState
+	similarityWake        chan struct{}
 	cfg                   config.Config
 	configPath            string
 	store                 *db.Store
@@ -108,6 +112,7 @@ func newProcessorAtPath(ctx context.Context, cfg config.Config, configPath strin
 	}
 	processor := &Processor{
 		cfg:                   cfg,
+		similarityWake:        make(chan struct{}, 1),
 		configPath:            configPath,
 		store:                 store,
 		runs:                  newRunRegistry(),
@@ -528,6 +533,7 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 	}); err != nil {
 		return "", err
 	}
+	p.wakeSimilarity()
 	return finalPath, nil
 }
 

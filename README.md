@@ -72,6 +72,34 @@ Mahnungen and Zahlungserinnerungen use the **Payment reminder** document type. R
 
 In **Setup → Recipients & learning**, add **Shared postal addresses** for locations receiving mail for several people, or edit a recipient to save addresses for that person/business. Enter the street and house number followed by the postcode and city, with a blank line between addresses. Detection prioritizes names immediately above matching postal address blocks and recognizes common spellings such as `Straße` and `Str.`. Address associations currently support numeric 4–5 digit postcodes. A shared address never chooses a person by itself; conflicting identities or personal/business evidence still require review. The detected address is shown with the document, and saved address changes apply to subsequent classifications without restarting.
 
+### Similar previously approved documents
+
+In **Setup → Compare similar documents**, enable local document similarity after installing Ollama and its embedding model:
+
+```bash
+brew install ollama
+brew services start ollama
+ollama pull embeddinggemma
+```
+
+If Ollama is already running, only the model download is needed. Save the similarity settings after active uploads finish; Paperless checks the model and restarts. Similarity uses a separate embedding model and works alongside **Apple Foundation Models, Bonsai, Ollama, or local rules** for classification. The first version supports Ollama embeddings on a loopback address only. Selecting FM or Bonsai does not install or start Ollama automatically.
+
+The review panel shows up to five closest previously approved documents, their approved folders and recipients, and the matching Markdown passages. These are comparisons, not filing-confidence scores: related documents can have different purposes or recipients. Similarity does not change classification, auto-filing, or your review choices.
+
+Existing approved documents and documents awaiting review are indexed in the background. Long Markdown is split into sections, preserving the source text. The index is stored in the local SQLite database using sqlite-vec cosine distance and is included in database backups. Content hashes and installed model digests trigger reindexing when text or model weights change. Deleting a document also deletes its embedding records. Missing text and service outages are shown without blocking review; the service retries indexing every 30 seconds. Text exceeding 2 MiB or 256 sections is reported as unavailable for similarity rather than silently truncated.
+
+Under **Embedding model settings**, you can select another installed Ollama embedding model or local server address. Configuration is separate from `[llm]` and `[bonsai]`:
+
+```toml
+[embeddings]
+enabled = true
+endpoint = "http://127.0.0.1:11434"
+model = "embeddinggemma"
+timeout_seconds = 120
+```
+
+Similarity is optional and disabled by default. Disabling it stops indexing and comparisons while retaining the rebuildable index. This first version uses exact section comparisons; retrieval quality and latency should be evaluated on your archive before using similarity to influence filing suggestions.
+
 ### Connect a network scanner
 
 The default inbox is `~/Paperless/inbox`. Paperless checks whether it is published as an SMB share and shows the configured folder in Setup.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 )
 
 type Config struct {
+	Embeddings Embeddings `toml:"embeddings"`
 	Paths              Paths              `toml:"paths"`
 	Service            Service            `toml:"service"`
 	OCR                OCR                `toml:"ocr"`
@@ -84,6 +86,32 @@ const DefaultBonsaiModel = "Bonsai-8B"
 type Bonsai struct {
 	Endpoint string `toml:"endpoint"`
 	Model    string `toml:"model"`
+}
+
+// Embeddings are independent of the document classification provider.
+type Embeddings struct {
+	Enabled        bool   `toml:"enabled" json:"enabled"`
+	Endpoint       string `toml:"endpoint" json:"endpoint"`
+	Model          string `toml:"model" json:"model"`
+	TimeoutSeconds int    `toml:"timeout_seconds" json:"-"`
+}
+
+func (e Embeddings) Validate() error {
+	u, err := url.Parse(e.Endpoint)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return fmt.Errorf("embeddings.endpoint must be a local HTTP server URL")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if u.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return fmt.Errorf("embeddings.endpoint must use localhost or a loopback IP address")
+	}
+	if strings.TrimSpace(e.Model) == "" || len(e.Model) > 200 || strings.ContainsAny(e.Model, " \t\r\n") {
+		return fmt.Errorf("embeddings.model must be a model name")
+	}
+	if e.TimeoutSeconds < 1 || e.TimeoutSeconds > 600 {
+		return fmt.Errorf("embeddings.timeout_seconds must be between 1 and 600")
+	}
+	return nil
 }
 
 type Setup struct {
@@ -159,7 +187,8 @@ func Default() Config {
 			MaxOutputTokens: 2_048,
 			KeepAlive:       "0",
 		},
-		Bonsai: Bonsai{Endpoint: DefaultBonsaiEndpoint, Model: DefaultBonsaiModel},
+		Embeddings: Embeddings{Endpoint: "http://127.0.0.1:11434", Model: "embeddinggemma", TimeoutSeconds: 120},
+		Bonsai:     Bonsai{Endpoint: DefaultBonsaiEndpoint, Model: DefaultBonsaiModel},
 		Policy: Policy{
 			AutoFileMinConfidence:   92,
 			MinApprovedExamples:     2,
@@ -282,6 +311,18 @@ func (c Config) Resolve() (Config, error) {
 	}
 	if c.Bonsai.Model == "" {
 		c.Bonsai.Model = DefaultBonsaiModel
+	}
+	if c.Embeddings.Endpoint == "" {
+		c.Embeddings.Endpoint = "http://127.0.0.1:11434"
+	}
+	if c.Embeddings.Model == "" {
+		c.Embeddings.Model = "embeddinggemma"
+	}
+	if c.Embeddings.TimeoutSeconds == 0 {
+		c.Embeddings.TimeoutSeconds = 120
+	}
+	if err := c.Embeddings.Validate(); err != nil {
+		return Config{}, err
 	}
 	switch c.Setup.Step {
 	case "", "documents", "scanner", "model", "ready", "complete":

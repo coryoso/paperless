@@ -73,3 +73,11 @@ keep_document_types = [
 ]
 
 [sender_folders]
+
+# Optional semantic comparisons, independent of the classification provider.
+# Start local Ollama and run: ollama pull embeddinggemma
+[embeddings]
+enabled = false
+endpoint = "http://127.0.0.1:11434"
+model = "embeddinggemma"
+timeout_seconds = 120

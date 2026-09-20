@@ -60,6 +60,7 @@ type jobURLs struct {
 }
 
 type dashboardResponse struct {
+	Similarity           similarityState           `json:"similarity"`
 	PaperRecommendations map[string]string         `json:"paper_recommendations"`
 	DatabaseBackup       databaseBackupStatus      `json:"database_backup"`
 	Settings             dashboardSettings         `json:"settings"`
@@ -75,6 +76,9 @@ type dashboardResponse struct {
 }
 
 type dashboardSettings struct {
+	EmbeddingsEnabled   bool   `json:"embeddings_enabled"`
+	EmbeddingModel      string `json:"embedding_model"`
+	EmbeddingEndpoint   string `json:"embedding_endpoint"`
 	Inbox               string `json:"inbox"`
 	ArchiveRoot         string `json:"archive_root"`
 	ArchiveExists       bool   `json:"archive_exists"`
@@ -180,7 +184,12 @@ func (p *Processor) serve(ctx context.Context) error {
 	workersDone := make(chan struct{})
 	go func() { defer close(workersDone); p.processUploadQueue(workerCtx) }()
 	defer func() { stopWorkers(); <-workersDone }()
+	similarityDone := make(chan struct{})
+	go func() { defer close(similarityDone); p.processSimilarity(workerCtx) }()
+	defer func() { stopWorkers(); <-similarityDone }()
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/jobs/{jobID}/similar", p.handleSimilarDocumentsAPI)
+	mux.HandleFunc("POST /api/setup/embeddings", p.handleEmbeddingSetupAPI)
 	mux.HandleFunc("GET /api/dashboard", p.handleDashboardAPI)
 	mux.HandleFunc("GET /api/jobs", p.handleJobsAPI)
 	mux.HandleFunc("GET /api/jobs/{jobID}", p.handleJobAPI)
@@ -277,6 +286,7 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		folders = []string{}
 	}
 	response := dashboardResponse{
+		Similarity:           p.similaritySnapshot(),
 		PaperRecommendations: classify.PaperRecommendations(p.cfg),
 		DatabaseBackup:       databaseBackups(p.cfg.Paths.ArchiveRoot),
 		RecipientProfiles:    profiles,
@@ -284,6 +294,9 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		LearningCount:        learningCount,
 		LearningPath:         p.cfg.DBPath(),
 		Settings: dashboardSettings{
+			EmbeddingsEnabled:   p.cfg.Embeddings.Enabled,
+			EmbeddingModel:      p.cfg.Embeddings.Model,
+			EmbeddingEndpoint:   p.cfg.Embeddings.Endpoint,
 			Inbox:               p.cfg.Paths.Inbox,
 			ArchiveRoot:         p.cfg.Paths.ArchiveRoot,
 			ArchiveExists:       archiveExists,
