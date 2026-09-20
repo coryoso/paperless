@@ -752,6 +752,29 @@ button:disabled {
   padding: 24px;
   background: var(--orange-soft);
 }
+.archive-location {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.archive-location > svg {
+  flex-shrink: 0;
+  color: var(--orange-dark);
+}
+.archive-location > div {
+  min-width: 0;
+}
+.archive-location p {
+  margin: 5px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.archive-filename {
+  margin-top: 12px;
+  color: var(--muted);
+}
 .route-head {
   display: flex;
   grid-column: 1 / -1;
