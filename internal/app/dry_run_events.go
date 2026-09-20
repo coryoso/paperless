@@ -8,12 +8,15 @@ import (
 )
 
 type runRegistry struct {
-	mu   sync.Mutex
-	runs map[string]*runState
+	mu      sync.Mutex
+	runs    map[string]*runState
+	changes dashboardEvents
 }
 
 type runState struct {
 	id          string
+	clientID    string
+	changed     func()
 	createdAt   time.Time
 	events      []progress.Event
 	err         string
@@ -26,14 +29,18 @@ func newRunRegistry() *runRegistry {
 	return &runRegistry{runs: map[string]*runState{}}
 }
 
-func (r *runRegistry) create(id string) *runState {
+func (r *runRegistry) create(id string, clientID ...string) *runState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pruneLocked()
 	state := &runState{
 		id:          id,
+		changed:     r.changes.publish,
 		createdAt:   time.Now().UTC(),
 		subscribers: map[chan progress.Event]struct{}{},
+	}
+	if len(clientID) > 0 {
+		state.clientID = clientID[0]
 	}
 	r.runs[id] = state
 	return state
@@ -78,6 +85,7 @@ func (s *runState) publish(event progress.Event) {
 		return
 	}
 	s.events = append(s.events, event)
+	s.changed()
 	for ch := range s.subscribers {
 		select {
 		case ch <- event:
@@ -104,6 +112,10 @@ func (s *runState) finish(err error) {
 	}
 
 	s.mu.Lock()
+	if s.done {
+		s.mu.Unlock()
+		return
+	}
 	if err != nil && len(s.events) > 0 {
 		event.Percent = s.events[len(s.events)-1].Percent
 	}
@@ -112,6 +124,7 @@ func (s *runState) finish(err error) {
 	}
 	s.done = true
 	s.events = append(s.events, event)
+	s.changed()
 	for ch := range s.subscribers {
 		select {
 		case ch <- event:
@@ -121,6 +134,34 @@ func (s *runState) finish(err error) {
 		delete(s.subscribers, ch)
 	}
 	s.mu.Unlock()
+}
+
+type uploadSnapshot struct {
+	RunID    string           `json:"run_id"`
+	ClientID string           `json:"client_upload_id"`
+	Events   []progress.Event `json:"events"`
+}
+
+// Each connection tracks the last event count sent for each run. A reconnect
+// starts with an empty cursor and receives full histories, including completion.
+func (r *runRegistry) snapshotsSince(sent map[string]int) []uploadSnapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var snapshots []uploadSnapshot
+	for id, state := range r.runs {
+		state.mu.Lock()
+		if len(state.events) > sent[id] {
+			snapshots = append(snapshots, uploadSnapshot{RunID: id, ClientID: state.clientID, Events: append([]progress.Event(nil), state.events...)})
+			sent[id] = len(state.events)
+		}
+		state.mu.Unlock()
+	}
+	for id := range sent {
+		if _, ok := r.runs[id]; !ok {
+			delete(sent, id)
+		}
+	}
+	return snapshots
 }
 
 func (s *runState) subscribe() ([]progress.Event, chan progress.Event, bool) {

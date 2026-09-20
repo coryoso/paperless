@@ -65,7 +65,10 @@ describe("dashboard API", () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await expect(api.dashboard()).resolves.toEqual(payload);
-    expect(fetch).toHaveBeenCalledWith("/api/dashboard", undefined);
+    expect(fetch).toHaveBeenCalledWith("/api/dashboard", {
+      cache: "no-store",
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("starts the native documents-directory chooser", async () => {

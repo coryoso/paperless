@@ -100,5 +100,6 @@ func (p *Processor) handleSaveRecipientAPI(w http.ResponseWriter, r *http.Reques
 		writeAPIError(w, err, http.StatusBadRequest)
 		return
 	}
+	p.notifyDashboard()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

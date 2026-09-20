@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -181,6 +182,22 @@ func runService(ctx context.Context, cfg config.Config, configPath string) error
 
 func (p *Processor) serve(ctx context.Context) error {
 	workerCtx, stopWorkers := context.WithCancel(ctx)
+	defer stopWorkers()
+	addr := net.JoinHostPort(p.cfg.Service.Host, strconv.Itoa(p.cfg.Service.Port))
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	relayConfig := p.cfg
+	relayConfig.Service.Port = listener.Addr().(*net.TCPAddr).Port
+	stopRelay, err := p.startDashboardRelay(relayConfig.DashboardURL())
+	if err != nil {
+		return fmt.Errorf("start dashboard notification relay: %w", err)
+	}
+	defer stopRelay()
+	defer p.dashboardEvents.close()
+	defer p.runs.changes.close()
 	workersDone := make(chan struct{})
 	go func() { defer close(workersDone); p.processUploadQueue(workerCtx) }()
 	defer func() { stopWorkers(); <-workersDone }()
@@ -191,6 +208,8 @@ func (p *Processor) serve(ctx context.Context) error {
 	mux.HandleFunc("GET /api/jobs/{jobID}/similar", p.handleSimilarDocumentsAPI)
 	mux.HandleFunc("POST /api/setup/embeddings", p.handleEmbeddingSetupAPI)
 	mux.HandleFunc("GET /api/dashboard", p.handleDashboardAPI)
+	mux.HandleFunc("GET /api/dashboard/events", p.handleDashboardEvents)
+	mux.HandleFunc("POST /api/internal/dashboard/notify", p.handleDashboardNotification)
 	mux.HandleFunc("GET /api/jobs", p.handleJobsAPI)
 	mux.HandleFunc("GET /api/jobs/{jobID}", p.handleJobAPI)
 	mux.HandleFunc("GET /api/jobs/{jobID}/pages", p.handleJobPagesAPI)
@@ -213,7 +232,6 @@ func (p *Processor) serve(ctx context.Context) error {
 	mux.HandleFunc("GET /files/{jobID}/pages/{page}/cleaned", p.handleJobPageImage)
 	mux.HandleFunc("GET /", handleWebAsset)
 
-	addr := fmt.Sprintf("%s:%d", p.cfg.Service.Host, p.cfg.Service.Port)
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	var restarting atomic.Bool
 	shutdownDone := make(chan struct{})
@@ -224,12 +242,14 @@ func (p *Processor) serve(ctx context.Context) error {
 		case <-p.restart:
 			restarting.Store(true)
 		}
+		p.dashboardEvents.close()
+		p.runs.changes.close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
 	slog.Info("dashboard listening", "url", p.cfg.DashboardURL())
-	err := server.ListenAndServe()
+	err = server.Serve(listener)
 	if err == http.ErrServerClosed {
 		<-shutdownDone
 		if restarting.Load() {
@@ -352,6 +372,11 @@ func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	clientID := r.FormValue("upload_id")
+	if len(clientID) > 128 {
+		writeAPIError(w, errors.New("upload ID is too long"), http.StatusBadRequest)
+		return
+	}
 	filename := filepath.Base(header.Filename)
 	if !supportedInputs[strings.ToLower(filepath.Ext(filename))] {
 		writeAPIError(w, fmt.Errorf("unsupported file type: %s", filepath.Ext(filename)), http.StatusBadRequest)
@@ -359,7 +384,7 @@ func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	runID := randomID()
 	jobID := randomID()
-	state := p.runs.create(runID)
+	state := p.runs.create(runID, clientID)
 	state.publish(progressEvent("upload", "received", "Upload received by server.", 4))
 	uploadDir := filepath.Join(p.cfg.Paths.Processing, "uploads", runID)
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
@@ -540,6 +565,7 @@ func (p *Processor) handleRefreshFoldersAPI(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, err, http.StatusInternalServerError)
 		return
 	}
+	p.notifyDashboard()
 	folders, err := p.folders(r.Context())
 	if err != nil {
 		writeAPIError(w, err, http.StatusInternalServerError)

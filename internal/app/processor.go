@@ -55,6 +55,9 @@ type Processor struct {
 	cfg                   config.Config
 	configPath            string
 	store                 *db.Store
+	dashboardEvents       dashboardEvents
+	servingDashboard      atomic.Bool
+	dashboardRelayToken   string
 	runs                  *runRegistry
 	uploadQueue           chan uploadWork
 	restart               chan struct{}
@@ -197,6 +200,7 @@ func (p *Processor) createJob(ctx context.Context, jobID, inputPath string, info
 	_ = p.store.Queries.AddEvent(ctx, sqlc.AddEventParams{
 		JobID: jobID, CreatedAt: now, Level: "info", Message: "received " + filepath.Base(inputPath),
 	})
+	p.notifyDashboard()
 	return nil
 }
 
@@ -225,19 +229,26 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	duplicate, err := p.store.RegisterRawCopy(ctx, sqlc.SetRawCopyParams{
 		RawPath: rawPath, FileHash: hash, Status: StatusCopyingRaw, UpdatedAt: db.Now(), ID: jobID,
 	})
+	if err == nil || errors.Is(err, sql.ErrNoRows) {
+		p.notifyDashboard()
+	}
 	if err == nil && duplicate.ID != "" {
 		duplicatePath := uniquePath(filepath.Join(p.cfg.Paths.Duplicates, timestamp+"__"+jobID[:8]+"__"+sourceName))
 		if err := moveFile(inboxPath, duplicatePath); err != nil {
 			return err
 		}
-		return p.store.Queries.SetDuplicate(ctx, sqlc.SetDuplicateParams{
+		if err := p.store.Queries.SetDuplicate(ctx, sqlc.SetDuplicateParams{
 			CurrentPath:            duplicatePath,
 			Status:                 StatusDuplicate,
 			DuplicateOf:            duplicate.ID,
 			PhysicalOriginalAction: "discard_candidate",
 			UpdatedAt:              db.Now(),
 			ID:                     jobID,
-		})
+		}); err != nil {
+			return err
+		}
+		p.notifyDashboard()
+		return nil
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -253,6 +264,7 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	}); err != nil {
 		return err
 	}
+	p.notifyDashboard()
 
 	workDir := filepath.Join(p.cfg.Paths.Processing, jobID)
 	ocrResult, err := p.runOCR(ctx, processingInput, workDir, reporter)
@@ -272,6 +284,7 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	}); err != nil {
 		return err
 	}
+	p.notifyDashboard()
 
 	if err := p.waitForClassification(ctx, reporter); err != nil {
 		return err
@@ -297,6 +310,7 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	}); err != nil {
 		return err
 	}
+	p.notifyDashboard()
 
 	decision := policy.Evaluate(ctx, p.cfg, p.store.Queries, classification)
 	if decision.AutoFile && !forceReview {
@@ -313,6 +327,7 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 		}); err != nil {
 			return err
 		}
+		p.notifyDashboard()
 		_ = p.store.Queries.AddEvent(ctx, sqlc.AddEventParams{
 			JobID: jobID, CreatedAt: db.Now(), Level: "info", Message: "archived to " + finalPath,
 		})
@@ -330,6 +345,7 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	}); err != nil {
 		return err
 	}
+	p.notifyDashboard()
 	_ = p.store.Queries.AddEvent(ctx, sqlc.AddEventParams{
 		JobID: jobID, CreatedAt: db.Now(), Level: "info", Message: "needs review: " + strings.Join(decision.Reasons, "; "),
 	})
@@ -504,6 +520,9 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 	}); err != nil {
 		return "", err
 	}
+	// The correction is already saved. Notify even if a later archive/learning
+	// step fails, so other dashboards display the state that actually persisted.
+	defer p.notifyDashboard()
 	if err := moveFile(job.CurrentPath, finalPath); err != nil {
 		return "", err
 	}
@@ -575,7 +594,11 @@ func (p *Processor) RejectJob(ctx context.Context, jobID string) error {
 			return err
 		}
 	}
-	return p.store.DeleteJob(ctx, jobID)
+	if err := p.store.DeleteJob(ctx, jobID); err != nil {
+		return err
+	}
+	p.notifyDashboard()
+	return nil
 }
 
 type jobArtifact struct {
@@ -656,13 +679,17 @@ func (p *Processor) failJob(ctx context.Context, jobID string, cause error) erro
 	_ = p.store.Queries.AddEvent(ctx, sqlc.AddEventParams{
 		JobID: jobID, CreatedAt: db.Now(), Level: "error", Message: cause.Error(),
 	})
-	return p.store.Queries.SetFailed(ctx, sqlc.SetFailedParams{
+	if err := p.store.Queries.SetFailed(ctx, sqlc.SetFailedParams{
 		Status:                 StatusFailed,
 		Error:                  cause.Error(),
 		PhysicalOriginalAction: "review",
 		UpdatedAt:              db.Now(),
 		ID:                     jobID,
-	})
+	}); err != nil {
+		return err
+	}
+	p.notifyDashboard()
+	return nil
 }
 
 func (p *Processor) candidateFiles() ([]string, error) {

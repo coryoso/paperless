@@ -24,6 +24,9 @@
 * {
   box-sizing: border-box;
 }
+html {
+  scrollbar-gutter: stable;
+}
 body {
   margin: 0;
   min-width: 320px;
@@ -56,7 +59,7 @@ svg {
   margin: 0 auto;
 }
 .masthead-inner {
-  padding: 22px 0 26px;
+  padding: 22px 0;
 }
 .brand-row {
   display: flex;
@@ -1263,11 +1266,27 @@ button:disabled {
   .masthead-inner {
     padding-top: 14px;
   }
+  .brand-row {
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+    font-size: 16px;
+  }
+  .brand strong {
+    font-size: 14px;
+  }
+  .brand {
+    gap: 5px;
+  }
   .brand span {
     display: none;
   }
   .nav-button {
-    padding: 7px 10px;
+    padding: 7px;
   }
   .welcome-block h1 {
     font-size: 34px;
@@ -1352,29 +1371,6 @@ button:disabled {
 }
 .workspace-shell .masthead {
   flex: none;
-}
-.workspace-shell .masthead-inner {
-  padding: 16px 0;
-}
-.workspace-shell .header-grid {
-  padding-top: 14px;
-  display: block;
-}
-.workspace-shell .welcome-block,
-.workspace-shell .upload-top,
-.workspace-shell .upload-actions {
-  display: none;
-}
-.workspace-shell .upload-panel {
-  padding: 0;
-  background: transparent;
-}
-.workspace-shell .drop-zone {
-  min-height: 58px;
-  padding: 9px 14px;
-}
-.workspace-shell .drop-zone-copy span {
-  display: none;
 }
 .workspace-shell .main {
   flex: 1;
@@ -1499,30 +1495,6 @@ button:focus-visible {
   }
 }
 @media (max-width: 620px) {
-  .workspace-shell .brand-row {
-    gap: 6px;
-    align-items: center;
-  }
-  .workspace-shell .brand-mark {
-    width: 30px;
-    height: 30px;
-    font-size: 16px;
-  }
-  .workspace-shell .brand strong {
-    font-size: 14px;
-  }
-  .workspace-shell .brand {
-    gap: 5px;
-  }
-  .workspace-shell .nav-button {
-    padding: 7px;
-  }
-  .workspace-shell .drop-zone {
-    grid-template-columns: auto 1fr;
-  }
-  .workspace-shell .drop-zone-action {
-    display: none;
-  }
   .workspace-shell .main {
     padding: 12px 0;
   }
@@ -1764,12 +1736,6 @@ button:focus-visible {
 }
 
 /* First-run guide */
-.onboarding-shell .masthead-inner {
-  padding: 22px 0;
-}
-.onboarding-shell .header-grid {
-  display: none;
-}
 .onboarding-shell .main {
   padding-top: 32px;
 }

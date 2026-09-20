@@ -103,6 +103,7 @@ func (p *Processor) backupDatabase(ctx context.Context) (string, error) {
 	if err := pruneDatabaseBackups(backupDir, databaseBackupRetention); err != nil {
 		return destination, err
 	}
+	p.notifyDashboard()
 	return destination, nil
 }
 

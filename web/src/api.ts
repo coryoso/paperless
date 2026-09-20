@@ -76,7 +76,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ addresses }),
     }),
-  dashboard: () => request<Dashboard>("/api/dashboard"),
+  dashboard: (signal: AbortSignal = AbortSignal.timeout(10000)) =>
+    request<Dashboard>("/api/dashboard", { cache: "no-store", signal }),
   pages: (jobID: string) =>
     request<{ pages: OCRPage[] }>(`/api/jobs/${jobID}/pages`),
   layout: (jobID: string) => request<TextLayout>(`/api/jobs/${jobID}/layout`),
@@ -85,9 +86,10 @@ export const api = {
     if (!response.ok) throw new Error(await response.text());
     return response.text();
   },
-  upload: (file: File) => {
+  upload: (file: File, uploadID: string) => {
     const body = new FormData();
     body.append("document", file);
+    body.append("upload_id", uploadID);
     return request<{ run_id: string; job_id: string }>("/api/uploads", {
       method: "POST",
       body,

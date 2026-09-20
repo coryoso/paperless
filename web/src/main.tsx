@@ -22,6 +22,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api } from "./api";
+import { createDashboardLoader, startDashboardRefresh } from "./refresh";
 import {
   documentTypes,
   recipientScopes,
@@ -42,30 +43,23 @@ import type {
   ProgressEvent,
   RecipientProfile,
   TextLayout,
+  UploadProgress,
 } from "./types";
 import {
   formatFileSize,
   isProcessingStatus,
   supportedDocuments,
 } from "./upload";
+import {
+  mergeUploadProgress,
+  reconcileUpload,
+  type UploadTask,
+  type UploadTaskState,
+} from "./upload-progress";
 import "./styles.css";
 
 type View = "overview" | "processing" | "review" | "documents" | "settings";
 type PreviewMode = "pdf" | "overlay" | "text";
-type UploadTaskState = "uploading" | "processing" | "complete" | "failed";
-
-type UploadTask = {
-  id: string;
-  jobID: string;
-  runID: string;
-  filename: string;
-  size: number;
-  createdAt: string;
-  state: UploadTaskState;
-  events: ProgressEvent[];
-  error: string;
-};
-
 const emptyDashboard: Dashboard = {
   database_backup: { directory: "", latest: "", count: 0, available: false },
   settings: {
@@ -96,36 +90,49 @@ function App() {
   const [selectedID, setSelectedID] = useState("");
   const [selectedUploadID, setSelectedUploadID] = useState("");
   const [uploads, setUploads] = useState<UploadTask[]>([]);
-  const streamsRef = useRef(new Map<string, EventSource>());
-
-  const load = useCallback(async () => {
-    try {
-      setError("");
-      const next = await api.dashboard();
-      setDashboard(next);
-      if (next.settings.setup_required) setView("settings");
-      setSelectedID(
-        (current) =>
-          current || next.review_jobs[0]?.id || next.recent_jobs[0]?.id || "",
-      );
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => void load(), [load]);
-
-  useEffect(
-    () => () => {
-      streamsRef.current.forEach((stream) => {
-        stream.close();
-      });
-      streamsRef.current.clear();
-    },
+  const loader = useMemo(
+    () =>
+      createDashboardLoader(
+        api.dashboard,
+        (next) => {
+          setError("");
+          setDashboard(next);
+          setUploads((current) =>
+            current.map((item) => reconcileUpload(item, next.all_jobs)),
+          );
+          setLoading(false);
+          if (next.settings.setup_required) setView("settings");
+          setSelectedID(
+            (current) =>
+              current ||
+              next.review_jobs[0]?.id ||
+              next.recent_jobs[0]?.id ||
+              "",
+          );
+        },
+        (reason) => {
+          setError(errorMessage(reason));
+          setLoading(false);
+        },
+      ),
     [],
   );
+  const load = loader.load;
+
+  const onUploads = useCallback((snapshots: UploadProgress[]) => {
+    setUploads((current) =>
+      current.map((item) => mergeUploadProgress(item, snapshots)),
+    );
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const stop = startDashboardRefresh(() => void load(), onUploads);
+    return () => {
+      stop();
+      loader.dispose();
+    };
+  }, [load, loader, onUploads]);
 
   const processingJobs = useMemo(
     () => dashboard.all_jobs.filter((job) => isProcessingStatus(job.status)),
@@ -141,12 +148,6 @@ function App() {
     activeUploadCount +
     processingJobs.filter((job) => !representedJobs.has(job.id)).length;
 
-  useEffect(() => {
-    if (!processingCount) return;
-    const timer = window.setInterval(() => void load(), 2500);
-    return () => window.clearInterval(timer);
-  }, [load, processingCount]);
-
   const updateUpload = useCallback(
     (id: string, update: (item: UploadTask) => UploadTask) => {
       setUploads((current) =>
@@ -154,16 +155,6 @@ function App() {
       );
     },
     [],
-  );
-
-  const appendUploadEvent = useCallback(
-    (id: string, event: ProgressEvent) => {
-      updateUpload(id, (item) => ({
-        ...item,
-        events: [...item.events, event],
-      }));
-    },
-    [updateUpload],
   );
 
   const startUpload = useCallback(
@@ -189,6 +180,7 @@ function App() {
           createdAt: initialEvent.at,
           state: "uploading",
           events: [initialEvent],
+          serverEventCount: 0,
           error: "",
         },
         ...current,
@@ -196,49 +188,14 @@ function App() {
       setSelectedUploadID(id);
 
       try {
-        const { run_id, job_id } = await api.upload(file);
+        const { run_id, job_id } = await api.upload(file, id);
         updateUpload(id, (item) => ({
           ...item,
           runID: run_id,
           jobID: job_id,
-          state: "processing",
+          state: item.state === "uploading" ? "processing" : item.state,
         }));
-        await load();
-
-        const stream = new EventSource(
-          `/api/uploads/${encodeURIComponent(run_id)}/events`,
-        );
-        streamsRef.current.set(id, stream);
-        stream.addEventListener("progress", (message) =>
-          appendUploadEvent(
-            id,
-            JSON.parse((message as MessageEvent).data) as ProgressEvent,
-          ),
-        );
-        stream.addEventListener("done", (message) => {
-          const event = JSON.parse(
-            (message as MessageEvent).data,
-          ) as ProgressEvent;
-          appendUploadEvent(id, event);
-          updateUpload(id, (item) => ({ ...item, state: "complete" }));
-          stream.close();
-          streamsRef.current.delete(id);
-          void load();
-        });
-        stream.addEventListener("failed", (message) => {
-          const event = JSON.parse(
-            (message as MessageEvent).data,
-          ) as ProgressEvent;
-          appendUploadEvent(id, event);
-          updateUpload(id, (item) => ({
-            ...item,
-            state: "failed",
-            error: event.message,
-          }));
-          stream.close();
-          streamsRef.current.delete(id);
-          void load();
-        });
+        void load();
       } catch (reason) {
         updateUpload(id, (item) => ({
           ...item,
@@ -247,7 +204,7 @@ function App() {
         }));
       }
     },
-    [appendUploadEvent, load, updateUpload],
+    [load, updateUpload],
   );
 
   const enqueueFiles = useCallback(
@@ -328,29 +285,27 @@ function App() {
             </nav>
           </div>
 
-          <div className="header-grid">
-            <div className="welcome-block">
-              <span className="eyebrow">Local document flow</span>
-              <h1>
-                {dashboard.settings.setup_required
-                  ? "Choose where your documents belong"
-                  : dashboard.stats.review
+          {!dashboard.settings.setup_required && view === "overview" && (
+            <div className="header-grid">
+              <div className="welcome-block">
+                <span className="eyebrow">Local document flow</span>
+                <h1>
+                  {dashboard.stats.review
                     ? `${dashboard.stats.review} document${dashboard.stats.review === 1 ? "" : "s"} waiting`
                     : "Your archive is up to date"}
-              </h1>
-              <div className="path-line">
-                <Inbox />{" "}
-                <span>{dashboard.settings.inbox || "Loading inbox..."}</span>
+                </h1>
+                <div className="path-line">
+                  <Inbox />{" "}
+                  <span>{dashboard.settings.inbox || "Loading inbox..."}</span>
+                </div>
               </div>
-            </div>
-            {!dashboard.settings.setup_required && (
               <UploadPanel
                 activeCount={activeUploadCount}
                 onFiles={enqueueFiles}
                 onOpenQueue={() => setView("processing")}
               />
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </header>
 
