@@ -1,0 +1,42 @@
+name: Label pull requests
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, closed]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: pr-labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      # Only read PR metadata; never check out or execute pull request code.
+      - name: Sync release note labels from the PR title
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const issue = {
+              ...context.repo,
+              issue_number: context.payload.pull_request.number,
+            };
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: issue.issue_number,
+            });
+            const type = /^(feat|fix)(?:\([^()\r\n]+\))?!?:\s+\S/.exec(pr.title)?.[1];
+            const desired = { feat: 'enhancement', fix: 'bug' }[type];
+            const labels = new Set(pr.labels.map(label => label.name));
+
+            for (const name of ['enhancement', 'bug']) {
+              if (name !== desired && labels.has(name)) {
+                await github.rest.issues.removeLabel({ ...issue, name });
+              }
+            }
+            if (desired && !labels.has(desired)) {
+              await github.rest.issues.addLabels({ ...issue, labels: [desired] });
+            }
