@@ -421,6 +421,7 @@ function App() {
           view === "documents" && (
             <Documents
               jobs={dashboard.all_jobs}
+              archiveRoot={dashboard.settings.archive_root}
               selected={selected}
               onSelect={setSelectedID}
             />
@@ -1000,16 +1001,18 @@ function ReviewWorkspace({
 
 function Documents({
   jobs,
+  archiveRoot,
   selected,
   onSelect,
 }: {
   jobs: Job[];
+  archiveRoot: string;
   selected: Job | null;
   onSelect: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const visible = jobs.filter((job) =>
-    `${job.source_filename} ${job.summary} ${job.classification.sender} ${job.classification.recipient}`
+    `${job.source_filename} ${job.summary} ${job.classification.summary} ${job.classification.sender} ${job.classification.recipient} ${job.classification.document_type} ${displayName(job.classification.document_type)} ${job.final_path}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
@@ -1034,6 +1037,8 @@ function Documents({
             empty="No matching documents."
             selectedID={selected?.id}
             onSelect={(job) => onSelect(job.id)}
+            archiveRoot={archiveRoot}
+            showArchiveDetails
             compact
           />
         </div>
@@ -1042,7 +1047,7 @@ function Documents({
             <JobDetail
               job={selected}
               folders={[]}
-              archiveRoot=""
+              archiveRoot={archiveRoot}
               onChanged={async () => {}}
             />
           ) : (
@@ -1060,12 +1065,16 @@ function JobList({
   onSelect,
   selectedID,
   compact,
+  archiveRoot = "",
+  showArchiveDetails = false,
 }: {
   jobs: Job[];
   empty: string;
   onSelect: (job: Job) => void;
   selectedID?: string;
   compact?: boolean;
+  archiveRoot?: string;
+  showArchiveDetails?: boolean;
 }) {
   if (!jobs.length) return <div className="empty-list">{empty}</div>;
   return (
@@ -1087,6 +1096,21 @@ function JobList({
             <span>
               {displayName(job.classification.sender) || job.source_filename}
             </span>
+            {showArchiveDetails && (
+              <>
+                <span>
+                  Type:{" "}
+                  {displayName(job.classification.document_type) || "Unknown"}
+                </span>
+                {job.status === "archived" && (
+                  <span title={savedFolder(job.final_path)}>
+                    Archived to:{" "}
+                    {savedFolder(job.final_path, archiveRoot) ||
+                      "Location unavailable"}
+                  </span>
+                )}
+              </>
+            )}
             <small>
               {formatDate(job.updated_at)} · {displayStatus(job.status)}
             </small>
@@ -1240,6 +1264,21 @@ function JobDetail({
         />
         <Fact label="Pages" value={String(job.page_count || 0)} />
       </div>
+      {job.status === "archived" && (
+        <section className="archive-location" aria-label="Archive location">
+          <FolderArchive aria-hidden="true" />
+          <div>
+            <span className="eyebrow">Archived to</span>
+            <p>{savedFolder(job.final_path) || "Location unavailable"}</p>
+            {job.final_path && (
+              <div className="archive-filename">
+                <span className="eyebrow">Saved filename</span>
+                <p>{job.final_path.split("/").pop()}</p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
       {classification.recipient_address && (
         <p className="learning-note">
           Detected recipient address:{" "}
@@ -1982,6 +2021,16 @@ function displayName(value: string) {
 }
 function displayStatus(value: string) {
   return displayName(value) || "Unknown";
+}
+function savedFolder(finalPath: string, archiveRoot = "") {
+  const separator = finalPath.lastIndexOf("/");
+  if (separator < 0) return "";
+  const folder = finalPath.slice(0, separator) || "/";
+  const root = archiveRoot.replace(/\/+$/, "");
+  if (root && folder === root) return "Archive root";
+  return root && folder.startsWith(`${root}/`)
+    ? folder.slice(root.length + 1)
+    : folder;
 }
 function formatDate(value: string) {
   const date = new Date(value);
