@@ -7,23 +7,57 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const body = JSON.parse(message) as { error?: unknown };
       if (typeof body.error === "string") message = body.error;
-    } catch { /* Non-JSON errors already contain readable text. */ }
+    } catch {
+      /* Non-JSON errors already contain readable text. */
+    }
     throw new Error(message || `${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<T>;
 }
 
 export const api = {
-  setModelProvider: (provider: "ollama" | "fm" | "bonsai", enabled?: boolean) => request<{ provider: string; restarting: boolean }>("/api/setup/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, ...(enabled === undefined ? {} : { enabled }) }) }),
+  setModelProvider: (provider: "ollama" | "fm" | "bonsai", enabled?: boolean) =>
+    request<{ provider: string; restarting: boolean }>("/api/setup/model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider,
+        ...(enabled === undefined ? {} : { enabled }),
+      }),
+    }),
   installBonsai,
-  setupProgress: (step: "model" | "complete") => request<{ step: string; restarting: boolean }>("/api/setup/progress", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ step }) }),
-  chooseDocumentsDirectory: () => request<{ documents_directory: string; restarting: boolean }>("/api/setup/documents-directory", { method: "POST" }),
-  openSharingSettings: () => request<{ ok: boolean }>("/api/setup/open-sharing-settings", { method: "POST" }),
-  backupDatabase: () => request<{ path: string }>("/api/backups", { method: "POST" }),
-  saveRecipient: (profile: RecipientProfile) => request<{ ok: boolean }>("/api/recipients", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(profile) }),
-  saveRecipientAddresses: (addresses: string[]) => request<{ ok: boolean }>("/api/recipient-addresses", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ addresses }) }),
+  setupProgress: (step: "model" | "complete") =>
+    request<{ step: string; restarting: boolean }>("/api/setup/progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ step }),
+    }),
+  chooseDocumentsDirectory: () =>
+    request<{ documents_directory: string; restarting: boolean }>(
+      "/api/setup/documents-directory",
+      { method: "POST" },
+    ),
+  openSharingSettings: () =>
+    request<{ ok: boolean }>("/api/setup/open-sharing-settings", {
+      method: "POST",
+    }),
+  backupDatabase: () =>
+    request<{ path: string }>("/api/backups", { method: "POST" }),
+  saveRecipient: (profile: RecipientProfile) =>
+    request<{ ok: boolean }>("/api/recipients", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    }),
+  saveRecipientAddresses: (addresses: string[]) =>
+    request<{ ok: boolean }>("/api/recipient-addresses", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ addresses }),
+    }),
   dashboard: () => request<Dashboard>("/api/dashboard"),
-  pages: (jobID: string) => request<{ pages: OCRPage[] }>(`/api/jobs/${jobID}/pages`),
+  pages: (jobID: string) =>
+    request<{ pages: OCRPage[] }>(`/api/jobs/${jobID}/pages`),
   layout: (jobID: string) => request<TextLayout>(`/api/jobs/${jobID}/layout`),
   text: async (jobID: string) => {
     const response = await fetch(`/files/${jobID}/text`);
@@ -33,22 +67,45 @@ export const api = {
   upload: (file: File) => {
     const body = new FormData();
     body.append("document", file);
-    return request<{ run_id: string; job_id: string }>("/api/uploads", { method: "POST", body });
+    return request<{ run_id: string; job_id: string }>("/api/uploads", {
+      method: "POST",
+      body,
+    });
   },
-  approve: (jobID: string, data: { folder: string; filename: string; document_type: string; physical_original_action?: string; recipient_profile_id?: number; recipient?: string; recipient_scope?: string }) =>
+  approve: (
+    jobID: string,
+    data: {
+      folder: string;
+      filename: string;
+      document_type: string;
+      physical_original_action?: string;
+      recipient_profile_id?: number;
+      recipient?: string;
+      recipient_scope?: string;
+    },
+  ) =>
     request<{ final_path: string }>(`/api/jobs/${jobID}/approve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
-  reject: (jobID: string) => request<{ ok: boolean }>(`/api/jobs/${jobID}/reject`, { method: "POST" }),
-  retry: (jobID: string) => request<{ inbox_path: string }>(`/api/jobs/${jobID}/retry`, { method: "POST" }),
-  refreshFolders: () => request<{ folders: string[] }>("/api/folders/refresh", { method: "POST" }),
+  reject: (jobID: string) =>
+    request<{ ok: boolean }>(`/api/jobs/${jobID}/reject`, { method: "POST" }),
+  retry: (jobID: string) =>
+    request<{ inbox_path: string }>(`/api/jobs/${jobID}/retry`, {
+      method: "POST",
+    }),
+  refreshFolders: () =>
+    request<{ folders: string[] }>("/api/folders/refresh", { method: "POST" }),
 };
 
-async function installBonsai(onProgress: (message: string) => void): Promise<void> {
+async function installBonsai(
+  onProgress: (message: string) => void,
+): Promise<void> {
   const response = await fetch("/api/setup/bonsai/install", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ install: true }),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ install: true }),
   });
   if (!response.ok) throw new Error(await response.text());
   if (!response.body) throw new Error("No installation progress received.");
@@ -63,12 +120,19 @@ async function installBonsai(onProgress: (message: string) => void): Promise<voi
       pending = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        const event = JSON.parse(line) as { message?: string; error?: string; done?: boolean };
+        const event = JSON.parse(line) as {
+          message?: string;
+          error?: string;
+          done?: boolean;
+        };
         if (event.error) throw new Error(event.error);
         if (event.message) onProgress(event.message);
         if (event.done) return;
       }
-      if (done) throw new Error("Installation connection closed. Retry to resume the download.");
+      if (done)
+        throw new Error(
+          "Installation connection closed. Retry to resume the download.",
+        );
     }
   } finally {
     await reader.cancel();
@@ -78,16 +142,31 @@ async function installBonsai(onProgress: (message: string) => void): Promise<voi
 
 // Wait for the saved choices to be loaded, including when the HTTP server
 // briefly closes during a setup restart. Ignore stale dashboards from before it.
-export async function waitForSetup(expected: Partial<Dashboard["settings"]>): Promise<void> {
+export async function waitForSetup(
+  expected: Partial<Dashboard["settings"]>,
+): Promise<void> {
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const response = await fetch("/api/dashboard", { signal: AbortSignal.timeout(3000), cache: "no-store" });
+      const response = await fetch("/api/dashboard", {
+        signal: AbortSignal.timeout(3000),
+        cache: "no-store",
+      });
       if (response.ok) {
-        const dashboard = await response.json() as Dashboard;
-        if (Object.entries(expected).every(([key, value]) => dashboard.settings[key as keyof Dashboard["settings"]] === value)) return;
+        const dashboard = (await response.json()) as Dashboard;
+        if (
+          Object.entries(expected).every(
+            ([key, value]) =>
+              dashboard.settings[key as keyof Dashboard["settings"]] === value,
+          )
+        )
+          return;
       }
-    } catch { /* The service may be restarting. */ }
+    } catch {
+      /* The service may be restarting. */
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error("Your settings were saved, but Paperless is still restarting. Refresh this page to resume setup.");
+  throw new Error(
+    "Your settings were saved, but Paperless is still restarting. Refresh this page to resume setup.",
+  );
 }

@@ -47,7 +47,12 @@ export type Job = {
 
 export type Dashboard = {
   paper_recommendations?: Record<string, string>;
-  database_backup?: { directory: string; latest: string; count: number; available: boolean };
+  database_backup?: {
+    directory: string;
+    latest: string;
+    count: number;
+    available: boolean;
+  };
   recipient_profiles?: RecipientProfile[];
   recipient_addresses?: string[];
   learning_count?: number;
@@ -77,7 +82,14 @@ export type Dashboard = {
   all_jobs: Job[];
 };
 
-export type RecipientProfile = { id: number; name: string; scope: string; aliases: string[]; addresses?: string[]; folder_prefix: string };
+export type RecipientProfile = {
+  id: number;
+  name: string;
+  scope: string;
+  aliases: string[];
+  addresses?: string[];
+  folder_prefix: string;
+};
 
 export type ProgressEvent = {
   at: string;
@@ -106,5 +118,14 @@ export type OCRPage = {
   }[];
 };
 
-export type TextBlock = { kind: "heading" | "paragraph" | "pre" | "table" | "columns"; text?: string; rows?: string[][]; columns?: TextBlock[][] };
-export type TextLayout = { pages: { page: number; blocks: TextBlock[] }[]; text: string; markdown: string };
+export type TextBlock = {
+  kind: "heading" | "paragraph" | "pre" | "table" | "columns";
+  text?: string;
+  rows?: string[][];
+  columns?: TextBlock[][];
+};
+export type TextLayout = {
+  pages: { page: number; blocks: TextBlock[] }[];
+  text: string;
+  markdown: string;
+};

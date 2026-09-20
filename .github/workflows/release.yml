@@ -27,12 +27,6 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Build embedded web assets
-        run: |
-          cd web
-          bun install --frozen-lockfile
-          bun run build
-
       - name: Validate the release tag
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
@@ -42,8 +36,8 @@ jobs:
             exit 1
           fi
 
-      - name: Test
-        run: go test -short -count=1 ./...
+      - name: Check formatting, lint, build web assets, and test
+        run: make fmt-check lint web-test test-unit
 
       - name: Build macOS binaries
         env:

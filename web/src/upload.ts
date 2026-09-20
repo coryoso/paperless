@@ -3,7 +3,11 @@ export type UploadCandidate = {
   type: string;
 };
 
-const supportedMimeTypes = new Set(["application/pdf", "image/png", "image/jpeg"]);
+const supportedMimeTypes = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+]);
 const supportedExtensions = [".pdf", ".png", ".jpg", ".jpeg"];
 
 export function isSupportedDocument(file: UploadCandidate): boolean {
@@ -15,7 +19,9 @@ export function isSupportedDocument(file: UploadCandidate): boolean {
   return supportedExtensions.some((extension) => name.endsWith(extension));
 }
 
-export function pickSupportedDocument<T extends UploadCandidate>(files: ArrayLike<T>): T | null {
+export function pickSupportedDocument<T extends UploadCandidate>(
+  files: ArrayLike<T>,
+): T | null {
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index];
     if (file && isSupportedDocument(file)) {
@@ -26,12 +32,20 @@ export function pickSupportedDocument<T extends UploadCandidate>(files: ArrayLik
   return null;
 }
 
-export function supportedDocuments<T extends UploadCandidate>(files: ArrayLike<T>): T[] {
+export function supportedDocuments<T extends UploadCandidate>(
+  files: ArrayLike<T>,
+): T[] {
   return Array.from(files).filter(isSupportedDocument);
 }
 
 export function isProcessingStatus(status: string): boolean {
-  return ["received", "copying_raw", "processing", "ocr_complete", "classified"].includes(status);
+  return [
+    "received",
+    "copying_raw",
+    "processing",
+    "ocr_complete",
+    "classified",
+  ].includes(status);
 }
 
 export function formatFileSize(bytes: number): string {
