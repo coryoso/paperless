@@ -99,7 +99,7 @@ paperless backup
 
 ### Configuration and dashboard port
 
-The private user configuration is `~/.paperless/config.toml`. The dashboard binds to loopback port `8844` by default, but its URL is derived from the configured host and port rather than being fixed in the application. `paperless url` always prints the address for the current configuration.
+The private user configuration is `~/.paperless/config.toml` in the home directory of the user running Paperless (unless overridden with `paperless --config /path/to/config.toml …`). On a fresh installation, Paperless uses built-in defaults without creating this file. The setup guide creates it when you choose the documents folder; `paperless configure` also creates it. The `.paperless` folder is hidden in Finder; use **Go → Go to Folder** and enter `~/.paperless`. The dashboard binds to loopback port `8844` by default, but its URL is derived from the configured host and port rather than being fixed in the application. `paperless url` always prints the address for the current configuration.
 
 Choose a different port during command-line setup with:
 
@@ -142,9 +142,9 @@ paperless configure --llm-provider bonsai
 paperless init
 ```
 
-Automatic installation requires macOS and the Command Line Tools (`git` and `curl`). It uses a pinned [Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) revision and verified model weights, stored under `<state_dir>/bonsai`. The installer downloads the text inference components; Python, MLX, Open WebUI, and the demo's code interpreter are not needed. The per-user LaunchAgent `com.paperless.bonsai` starts the server at login on `127.0.0.1:8080`. Installation and server logs are at `<state_dir>/bonsai-install.log` (browser installs) and `<state_dir>/bonsai/server.log`.
+Automatic installation requires macOS and the Command Line Tools (`git` and `curl`). It uses a pinned [Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) revision and verified model weights, stored under `<state_dir>/bonsai`. The installer downloads the text inference components; Python, MLX, Open WebUI, and the demo's code interpreter are not needed. The per-user LaunchAgent `com.paperless.bonsai` starts the server at login on `127.0.0.1`. Installation tries the configured port (8080 by default) and automatically chooses a free local port if it is occupied. After the server is ready, both browser and command-line installation save the selected address as `bonsai.endpoint` in the active configuration file. The LaunchAgent retains that port across restarts. Installation and server logs are at `<state_dir>/bonsai-install.log` (browser installs) and `<state_dir>/bonsai/server.log`.
 
-To connect an existing Bonsai-demo llama.cpp server, set the following in your config and use **Save model** in Setup. Both a server root URL and a URL ending in `/v1` work. Set `model` to its exact `/v1/models` ID, or launch the upstream server with `--alias Bonsai-8B`. Other Bonsai families, including Bonsai 2, can use their own model ID here. Managed installation always installs Bonsai 8B at the default endpoint.
+To connect an existing Bonsai-demo llama.cpp server, set the following in your config and use **Save model** in Setup. Both a server root URL and a URL ending in `/v1` work. Set `model` to its exact `/v1/models` ID, or launch the upstream server with `--alias Bonsai-8B`. Other Bonsai families, including Bonsai 2, can use their own model ID here. Managed installation always installs Bonsai 8B on a local loopback address.
 
 ```toml
 [llm]

@@ -347,9 +347,9 @@ func (p *Processor) handleBonsaiInstallAPI(w http.ResponseWriter, r *http.Reques
 	if install == nil {
 		install = bonsai.Install
 	}
-	err = install(r.Context(), cfg, log, log, func(message string) {
+	err = installBonsai(r.Context(), cfg, p.configPath, log, log, func(message string) {
 		send(map[string]any{"message": message})
-	})
+	}, install)
 	if err != nil {
 		send(map[string]any{"error": err.Error() + "; installation log: " + logPath})
 		return

@@ -199,7 +199,7 @@ func TestBonsaiSetupChecksServerAndPreservesOllamaConfig(t *testing.T) {
 	}
 }
 
-func TestBonsaiInstallationStreamsProgressAndLeavesConfigUntilSaved(t *testing.T) {
+func TestBonsaiInstallationSavesEndpointButLeavesProviderUntilSaved(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprint(fail), func(t *testing.T) {
 			cfg := config.Default()
@@ -208,12 +208,17 @@ func TestBonsaiInstallationStreamsProgressAndLeavesConfigUntilSaved(t *testing.T
 			if _, err := config.Write(path, cfg); err != nil {
 				t.Fatal(err)
 			}
-			p := &Processor{configPath: path, restart: make(chan struct{}, 1), modelInstaller: func(ctx context.Context, cfg config.Config, out, errout io.Writer, report func(string)) error {
+			p := &Processor{configPath: path, restart: make(chan struct{}, 1), modelInstaller: func(ctx context.Context, cfg config.Config, out, errout io.Writer, report func(string)) (string, error) {
 				report("Downloading model…")
-				if fail {
-					return errors.New("download failed")
+				// Simulate a setting saved while the installer was running.
+				cfg.Service.Port = 9988
+				if _, err := config.Write(path, cfg); err != nil {
+					t.Fatal(err)
 				}
-				return nil
+				if fail {
+					return "", errors.New("download failed")
+				}
+				return "http://127.0.0.1:49152", nil
 			}}
 			r := httptest.NewRequest(http.MethodPost, "/api/setup/bonsai/install", strings.NewReader(`{"install":true}`))
 			r.RemoteAddr = "127.0.0.1:1234"
@@ -229,6 +234,13 @@ func TestBonsaiInstallationStreamsProgressAndLeavesConfigUntilSaved(t *testing.T
 			saved, _ := config.Load(path)
 			if saved.LLM.Provider != "ollama" {
 				t.Fatal("installation changed model before save")
+			}
+			wantEndpoint := "http://127.0.0.1:49152"
+			if fail {
+				wantEndpoint = cfg.Bonsai.Endpoint
+			}
+			if saved.Bonsai.Endpoint != wantEndpoint || saved.Service.Port != 9988 {
+				t.Fatalf("installation lost settings: endpoint=%s port=%d", saved.Bonsai.Endpoint, saved.Service.Port)
 			}
 			if p.modelInstallBusy.Load() {
 				t.Fatal("busy flag leaked")
@@ -252,9 +264,9 @@ func TestBonsaiInstallRejectsRemoteInvalidAndConcurrentRequests(t *testing.T) {
 		{"busy", "127.0.0.1:1234", `{"install":true}`, "application/json", true, 409},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Processor{modelInstaller: func(context.Context, config.Config, io.Writer, io.Writer, func(string)) error {
+			p := &Processor{modelInstaller: func(context.Context, config.Config, io.Writer, io.Writer, func(string)) (string, error) {
 				t.Fatal("unexpected install")
-				return nil
+				return "http://127.0.0.1:49152", nil
 			}}
 			p.modelInstallBusy.Store(tt.busy)
 			r := httptest.NewRequest("POST", "/api/setup/bonsai/install", strings.NewReader(tt.body))

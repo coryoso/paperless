@@ -60,7 +60,7 @@ type Processor struct {
 	classificationSlots   chan struct{}
 	processOCR            func(context.Context, config.Config, string, string, progress.Reporter) (ocr.Result, error)
 	modelInstallBusy      atomic.Bool
-	modelInstaller        func(context.Context, config.Config, io.Writer, io.Writer, func(string)) error
+	modelInstaller        bonsaiInstaller
 }
 
 type DryRunResult struct {

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,9 +89,9 @@ func TestInstallLocksReleaseAfterFailure(t *testing.T) {
 
 func TestInstallRejectsCustomServerBeforeRunningCommands(t *testing.T) {
 	cfg := config.Default()
-	cfg.Bonsai.Endpoint = "http://127.0.0.1:9999"
+	cfg.Bonsai.Endpoint = "http://192.0.2.1:9999"
 	cfg.Paths.StateDir = t.TempDir()
-	if err := Install(t.Context(), cfg, io.Discard, io.Discard, nil); err == nil {
+	if _, err := Install(t.Context(), cfg, io.Discard, io.Discard, nil); err == nil {
 		t.Fatal("expected managed install rejection")
 	}
 	entries, _ := os.ReadDir(cfg.Paths.StateDir)
@@ -112,7 +113,7 @@ func TestInstallStopsWhenGitFails(t *testing.T) {
 	t.Setenv("PATH", dir)
 	cfg := config.Default()
 	cfg.Paths.StateDir = t.TempDir()
-	err := Install(t.Context(), cfg, io.Discard, io.Discard, nil)
+	_, err := Install(t.Context(), cfg, io.Discard, io.Discard, nil)
 	if err == nil || !strings.Contains(err.Error(), "git failed") {
 		t.Fatalf("err=%v", err)
 	}
@@ -135,5 +136,63 @@ func TestInstallerCancellationStopsShellChildren(t *testing.T) {
 	}
 	if time.Since(start) > 2*time.Second {
 		t.Fatal("child process survived cancellation")
+	}
+}
+
+func TestPortSelectionPreservesFreePortAndAvoidsOccupiedPort(t *testing.T) {
+	occupied, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	cfg := config.Default()
+	cfg.Bonsai.Endpoint = "http://" + occupied.Addr().String()
+	selected, err := reservePort(cfg.Bonsai)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer selected.Close()
+	if selected.Addr().String() == occupied.Addr().String() {
+		t.Fatal("selected the occupied port")
+	}
+	addr := selected.Addr().(*net.TCPAddr)
+	if !addr.IP.IsLoopback() || addr.Port == 0 {
+		t.Fatalf("invalid selected address: %s", addr)
+	}
+	cfg.Bonsai.Endpoint = "http://" + selected.Addr().String()
+	data, err := servicePlist(cfg, t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var service struct{ EnvironmentVariables map[string]string }
+	if _, err := plist.Unmarshal(data, &service); err != nil {
+		t.Fatal(err)
+	}
+	_, port, _ := net.SplitHostPort(selected.Addr().String())
+	if service.EnvironmentVariables["PORT"] != port {
+		t.Fatalf("service did not use selected port: %v", service.EnvironmentVariables)
+	}
+	if err := selected.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reused, err := reservePort(cfg.Bonsai)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reused.Close()
+	if reused.Addr().String() != selected.Addr().String() {
+		t.Fatal("free configured port was not reused")
+	}
+}
+
+func TestManagedPortRejectsCustomOrInvalidEndpoints(t *testing.T) {
+	for _, endpoint := range []string{"http://0.0.0.0:8080", "https://127.0.0.1:8080", "http://127.0.0.1", "http://127.0.0.1:0", "http://127.0.0.1:65536", "http://user@127.0.0.1:8080", "http://127.0.0.1:8080/custom"} {
+		t.Run(endpoint, func(t *testing.T) {
+			cfg := config.Default().Bonsai
+			cfg.Endpoint = endpoint
+			if _, err := reservePort(cfg); err == nil {
+				t.Fatal("accepted unsupported managed endpoint")
+			}
+		})
 	}
 }

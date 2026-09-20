@@ -31,7 +31,7 @@ type ollamaModelInfo struct {
 	Capabilities []string `json:"capabilities"`
 }
 
-func InstallRuntimeDependencies(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) error {
+func InstallRuntimeDependencies(ctx context.Context, cfg config.Config, configPath string, stdout, stderr io.Writer) error {
 	if cfg.LLM.Enabled && cfg.LLM.Provider == "fm" {
 		if err := fm.Available(ctx); err != nil {
 			return err
@@ -74,7 +74,7 @@ func InstallRuntimeDependencies(ctx context.Context, cfg config.Config, stdout, 
 			fmt.Fprintln(stdout, "Using the configured Bonsai server.")
 			return nil
 		}
-		return bonsai.Install(ctx, cfg, stdout, stderr, nil)
+		return installBonsai(ctx, cfg, configPath, stdout, stderr, nil, bonsai.Install)
 	}
 	return nil
 }
@@ -275,4 +275,24 @@ func ollamaModelList(ctx context.Context, cfg config.Config) ([]ollamaModelInfo,
 		return nil, err
 	}
 	return tags.Models, nil
+}
+
+type bonsaiInstaller func(context.Context, config.Config, io.Writer, io.Writer, func(string)) (string, error)
+
+func installBonsai(ctx context.Context, cfg config.Config, configPath string, stdout, stderr io.Writer, report func(string), install bonsaiInstaller) error {
+	endpoint, err := install(ctx, cfg, stdout, stderr, report)
+	if err != nil {
+		return err
+	}
+	// Installation can take minutes. Preserve settings saved in the meantime,
+	// and leave provider selection to the separate Save model action.
+	latest, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	latest.Bonsai.Endpoint = endpoint
+	if _, err := config.Write(configPath, latest); err != nil {
+		return fmt.Errorf("Bonsai is ready at %s but its endpoint could not be saved: %w", endpoint, err)
+	}
+	return nil
 }

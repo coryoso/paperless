@@ -41,6 +41,7 @@ keep_alive = "0"
 # Bonsai server settings are separate from the Ollama endpoint/model above.
 # Setup installs Bonsai-8B locally; existing servers can use another model ID.
 [bonsai]
+# Managed installation selects a free local port if this one is occupied, then saves it here.
 endpoint = "http://127.0.0.1:8080"
 model = "Bonsai-8B"
 

@@ -102,7 +102,7 @@ func run(args []string) error {
 			return err
 		}
 		if !*skipInstall {
-			if err := app.InstallRuntimeDependencies(context.Background(), cfg, os.Stdout, os.Stderr); err != nil {
+			if err := app.InstallRuntimeDependencies(context.Background(), cfg, *configPath, os.Stdout, os.Stderr); err != nil {
 				return err
 			}
 		}
