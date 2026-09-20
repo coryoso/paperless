@@ -11,4 +11,4 @@ Use the root Makefile as the development entry point. Go and Bun must be install
 
 Edit frontend source in `web/`. Biome configuration is in `web/biome.json`; it uses the recommended lint rules except CSS descending specificity, because the existing stylesheet intentionally groups component and responsive overrides. Keep the Biome version pinned and commit dependency changes together with `web/bun.lock`.
 
-Do not commit `web/node_modules/` or generated `internal/app/webdist/` files. The Makefile installs dependencies with the frozen Bun lockfile and generates web assets before Go builds, tests, and vet checks. CI and releases rebuild the frontend from source before compiling the Go binary. When invoking Go commands directly in a fresh checkout, run `make web-build` first so the `go:embed` inputs exist.
+The Makefile installs dependencies with the frozen Bun lockfile and generates web assets before Go builds, tests, and vet checks. CI and releases rebuild the frontend from source before compiling the Go binary. When invoking Go commands directly in a fresh checkout, run `make web-build` first so the `go:embed` inputs exist.
