@@ -48,7 +48,14 @@ var supportedInputs = map[string]bool{
 	".jpeg": true,
 }
 
+type processingAttempt struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 type Processor struct {
+	processingMu          sync.Mutex
+	activeJobs            map[string]*processingAttempt
 	similarityMu          sync.RWMutex
 	similarity            similarityState
 	similarityWake        chan struct{}
@@ -115,6 +122,7 @@ func newProcessorAtPath(ctx context.Context, cfg config.Config, configPath strin
 	}
 	processor := &Processor{
 		cfg:                   cfg,
+		activeJobs:            make(map[string]*processingAttempt),
 		similarityWake:        make(chan struct{}, 1),
 		configPath:            configPath,
 		store:                 store,
@@ -178,7 +186,7 @@ func (p *Processor) processFile(ctx context.Context, jobID, inboxPath string, fo
 	if err := p.createJob(ctx, jobID, inboxPath, info, reporter); err != nil {
 		return "", err
 	}
-	if err := p.processCreatedJob(ctx, jobID, inboxPath, info.ModTime(), forceReview, reporter); err != nil {
+	if err := p.processCreatedJob(ctx, jobID, inboxPath, info.ModTime(), forceReview, false, reporter); err != nil {
 		return jobID, err
 	}
 	return jobID, nil
@@ -204,54 +212,110 @@ func (p *Processor) createJob(ctx context.Context, jobID, inputPath string, info
 	return nil
 }
 
-func (p *Processor) processCreatedJob(ctx context.Context, jobID, inputPath string, scanTime time.Time, forceReview bool, reporter progress.Reporter) error {
-	if err := p.processJob(ctx, jobID, inputPath, scanTime, forceReview, reporter); err != nil {
-		_ = p.failJob(ctx, jobID, err)
+func (p *Processor) processCreatedJob(ctx context.Context, jobID, inputPath string, scanTime time.Time, forceReview, reprocess bool, reporter progress.Reporter) error {
+	p.processingMu.Lock()
+	if attempt := p.activeJobs[jobID]; attempt != nil {
+		select {
+		case <-attempt.done:
+		default:
+			p.processingMu.Unlock()
+			return errors.New("document is already processing")
+		}
+	}
+	job, err := p.store.Queries.GetJob(ctx, jobID)
+	if err != nil || job.Status != StatusReceived || job.CurrentPath != inputPath {
+		p.processingMu.Unlock()
+		if err != nil {
+			return err
+		}
+		return errors.New("processing attempt was superseded")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	attempt := &processingAttempt{cancel: cancel, done: make(chan struct{})}
+	p.activeJobs[jobID] = attempt
+	p.processingMu.Unlock()
+	defer func() {
+		cancel()
+		// Signal before acquiring the mutex: reprocessing waits while holding it.
+		close(attempt.done)
+		p.processingMu.Lock()
+		if p.activeJobs[jobID] == attempt {
+			delete(p.activeJobs, jobID)
+		}
+		p.processingMu.Unlock()
+	}()
+	if err := p.processJob(ctx, jobID, inputPath, scanTime, forceReview, reprocess, reporter); err != nil {
+		// Persist cancellation too, before allowing a replacement attempt to start.
+		failureCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stop()
+		_ = p.failJob(failureCtx, jobID, err)
 		return err
 	}
 	return nil
 }
 
-func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, scanTime time.Time, forceReview bool, reporter progress.Reporter) error {
+func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, scanTime time.Time, forceReview, reprocess bool, reporter progress.Reporter) error {
 	timestamp := time.Now().Format("20060102-150405")
 	// Preserve the input format until OCR converts it to a searchable PDF.
 	// Renaming an image to .pdf makes the renderer send it to Poppler.
 	sourceName := safeInputName(filepath.Base(inboxPath))
-	reporter.Info("prepare", "raw", "Keeping an untouched raw copy.", 0, 0, 10)
-	rawPath := uniquePath(filepath.Join(p.cfg.Paths.Raw, timestamp+"__"+jobID[:8]+"__"+sourceName))
-	if err := copyFile(inboxPath, rawPath); err != nil {
-		return err
-	}
-	hash, err := sha256File(rawPath)
-	if err != nil {
-		return err
-	}
-	duplicate, err := p.store.RegisterRawCopy(ctx, sqlc.SetRawCopyParams{
-		RawPath: rawPath, FileHash: hash, Status: StatusCopyingRaw, UpdatedAt: db.Now(), ID: jobID,
-	})
-	if err == nil || errors.Is(err, sql.ErrNoRows) {
-		p.notifyDashboard()
-	}
-	if err == nil && duplicate.ID != "" {
-		duplicatePath := uniquePath(filepath.Join(p.cfg.Paths.Duplicates, timestamp+"__"+jobID[:8]+"__"+sourceName))
-		if err := moveFile(inboxPath, duplicatePath); err != nil {
+	if reprocess {
+		job, err := p.store.Queries.GetJob(ctx, jobID)
+		if err != nil {
 			return err
 		}
-		if err := p.store.Queries.SetDuplicate(ctx, sqlc.SetDuplicateParams{
-			CurrentPath:            duplicatePath,
-			Status:                 StatusDuplicate,
-			DuplicateOf:            duplicate.ID,
-			PhysicalOriginalAction: "discard_candidate",
-			UpdatedAt:              db.Now(),
-			ID:                     jobID,
-		}); err != nil {
+		if job.RawPath == "" {
+			rawPath := uniquePath(filepath.Join(p.cfg.Paths.Raw, timestamp+"__"+jobID[:8]+"__"+sourceName))
+			if err := copyFile(inboxPath, rawPath); err != nil {
+				return err
+			}
+			hash, err := sha256File(rawPath)
+			if err != nil {
+				return err
+			}
+			if err := p.store.Queries.SetRawCopy(ctx, sqlc.SetRawCopyParams{RawPath: rawPath, FileHash: hash, Status: StatusCopyingRaw, UpdatedAt: db.Now(), ID: jobID}); err != nil {
+				return err
+			}
+			p.notifyDashboard()
+		}
+	} else {
+		reporter.Info("prepare", "raw", "Keeping an untouched raw copy.", 0, 0, 10)
+		rawPath := uniquePath(filepath.Join(p.cfg.Paths.Raw, timestamp+"__"+jobID[:8]+"__"+sourceName))
+		if err := copyFile(inboxPath, rawPath); err != nil {
 			return err
 		}
-		p.notifyDashboard()
-		return nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
+		hash, err := sha256File(rawPath)
+		if err != nil {
+			return err
+		}
+		duplicate, err := p.store.RegisterRawCopy(ctx, sqlc.SetRawCopyParams{
+			RawPath: rawPath, FileHash: hash, Status: StatusCopyingRaw, UpdatedAt: db.Now(), ID: jobID,
+		})
+		if err == nil || errors.Is(err, sql.ErrNoRows) {
+			p.notifyDashboard()
+		}
+		if err == nil && duplicate.ID != "" {
+			duplicatePath := uniquePath(filepath.Join(p.cfg.Paths.Duplicates, timestamp+"__"+jobID[:8]+"__"+sourceName))
+			if err := moveFile(inboxPath, duplicatePath); err != nil {
+				return err
+			}
+			if err := p.store.Queries.SetDuplicate(ctx, sqlc.SetDuplicateParams{
+				CurrentPath:            duplicatePath,
+				Status:                 StatusDuplicate,
+				DuplicateOf:            duplicate.ID,
+				PhysicalOriginalAction: "discard_candidate",
+				UpdatedAt:              db.Now(),
+				ID:                     jobID,
+			}); err != nil {
+				return err
+			}
+			p.notifyDashboard()
+			return nil
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+
 	}
 
 	processingInput := uniquePath(filepath.Join(p.cfg.Paths.Processing, timestamp+"__"+jobID[:8]+"__"+sourceName))
@@ -417,6 +481,8 @@ type RecipientCorrection struct {
 }
 
 func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, documentType, physicalAction string, recipient ...RecipientCorrection) (string, error) {
+	p.processingMu.Lock()
+	defer p.processingMu.Unlock()
 	folder = strings.TrimSpace(folder)
 	if filepath.IsAbs(folder) {
 		return "", errors.New("folder must be relative to the archive root")
@@ -557,6 +623,8 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 }
 
 func (p *Processor) RejectJob(ctx context.Context, jobID string) error {
+	p.processingMu.Lock()
+	defer p.processingMu.Unlock()
 	job, err := p.store.Queries.GetJob(ctx, jobID)
 	if err != nil {
 		return err
@@ -658,21 +726,6 @@ func removeJobArtifact(path string, recursive bool) error {
 		return err
 	}
 	return nil
-}
-
-func (p *Processor) retryJob(ctx context.Context, jobID string) (string, error) {
-	job, err := p.store.Queries.GetJob(ctx, jobID)
-	if err != nil {
-		return "", err
-	}
-	if job.RawPath == "" {
-		return "", errors.New("job has no raw file")
-	}
-	retryPath := uniquePath(filepath.Join(p.cfg.Paths.Inbox, "retry-"+jobID[:8]+"-"+filepath.Base(job.RawPath)))
-	if err := copyFile(job.RawPath, retryPath); err != nil {
-		return "", err
-	}
-	return retryPath, nil
 }
 
 func (p *Processor) failJob(ctx context.Context, jobID string, cause error) error {

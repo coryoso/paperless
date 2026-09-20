@@ -207,6 +207,40 @@ function App() {
     [load, updateUpload],
   );
 
+  const reprocessJob = async (job: Job) => {
+    const { run_id, job_id } = await api.retry(job.id);
+    // Finish any dashboard fetch started before the restart before introducing
+    // the new attempt, so an older snapshot cannot mark it complete.
+    await load();
+    setUploads((current) => [
+      {
+        id: run_id,
+        jobID: job_id,
+        runID: run_id,
+        filename: job.source_filename,
+        size: 0,
+        createdAt: new Date().toISOString(),
+        state: "processing",
+        events: [
+          {
+            at: new Date().toISOString(),
+            level: "info",
+            phase: "prepare",
+            step: "queued",
+            message: "Reprocessing queued; results will return to Review.",
+            percent: 6,
+          },
+        ],
+        serverEventCount: 0,
+        error: "",
+      },
+      ...current.filter((item) => item.jobID !== job.id),
+    ]);
+    setSelectedUploadID(run_id);
+    setView("processing");
+    await load();
+  };
+
   const enqueueFiles = useCallback(
     (files: File[]) => {
       files.forEach((file) => void startUpload(file));
@@ -350,6 +384,7 @@ function App() {
               selectedID={selectedUploadID}
               onSelect={setSelectedUploadID}
               onOpenJob={openJob}
+              onReprocess={reprocessJob}
             />
           )}
         {!loading &&
@@ -369,6 +404,7 @@ function App() {
               }
               onSelect={setSelectedID}
               onChanged={load}
+              onReprocess={reprocessJob}
             />
           )}
         {!loading &&
@@ -379,6 +415,7 @@ function App() {
               archiveRoot={dashboard.settings.archive_root}
               selected={selected}
               onSelect={setSelectedID}
+              onReprocess={reprocessJob}
             />
           )}
         {!loading &&
@@ -555,6 +592,7 @@ function ProcessingWorkspace({
   selectedID,
   onSelect,
   onOpenJob,
+  onReprocess,
 }: {
   uploads: UploadTask[];
   jobs: Job[];
@@ -562,6 +600,7 @@ function ProcessingWorkspace({
   selectedID: string;
   onSelect: (id: string) => void;
   onOpenJob: (job: Job) => void;
+  onReprocess: (job: Job) => Promise<void>;
 }) {
   const represented = new Set(
     uploads.map((item) => item.jobID).filter(Boolean),
@@ -636,9 +675,11 @@ function ProcessingWorkspace({
       <div className="detail-column">
         {selected ? (
           <ProcessingDetail
+            key={selected.id}
             task={selected.task}
             job={selected.job}
             onOpenJob={onOpenJob}
+            onReprocess={onReprocess}
           />
         ) : (
           <EmptyState icon={<LoaderCircle />} title="Select an upload" />
@@ -652,10 +693,12 @@ function ProcessingDetail({
   task,
   job,
   onOpenJob,
+  onReprocess,
 }: {
   task?: UploadTask;
   job?: Job;
   onOpenJob: (job: Job) => void;
+  onReprocess: (job: Job) => Promise<void>;
 }) {
   const state = processingEntryState(task, job);
   const percent = processingEntryPercent(task, job);
@@ -690,7 +733,10 @@ function ProcessingDetail({
       )}
       <div className="fact-row queue-facts">
         <Fact label="Status" value={processingEntryLabel(task, job)} />
-        <Fact label="Size" value={task ? formatFileSize(task.size) : "—"} />
+        <Fact
+          label="Size"
+          value={task?.size ? formatFileSize(task.size) : "—"}
+        />
         <Fact
           label="Queued"
           value={formatDate(task?.createdAt || job?.scan_timestamp || "")}
@@ -729,6 +775,9 @@ function ProcessingDetail({
             current database status will refresh automatically.
           </p>
         )}
+        {job && (
+          <ReprocessButton key={job.id} job={job} onReprocess={onReprocess} />
+        )}
         {canOpen && (
           <button
             type="button"
@@ -740,6 +789,52 @@ function ProcessingDetail({
         )}
       </section>
     </article>
+  );
+}
+
+function ReprocessButton({
+  job,
+  onReprocess,
+  disabled = false,
+}: {
+  job: Job;
+  onReprocess: (job: Job) => Promise<void>;
+  disabled?: boolean;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  if (job.status === "rejected") return null;
+  return (
+    <div className="reprocess-action">
+      <button
+        type="button"
+        className="icon-text-button"
+        disabled={disabled || pending}
+        onClick={async () => {
+          setPending(true);
+          setError("");
+          try {
+            await onReprocess(job);
+          } catch (reason) {
+            setError(errorMessage(reason));
+          } finally {
+            setPending(false);
+          }
+        }}
+      >
+        {pending ? <LoaderCircle className="spin" /> : <RotateCcw />}
+        {pending ? "Restarting…" : "Reprocess document"}
+      </button>
+      <p>
+        Run OCR and classification again, then review the results.
+        {job.final_path ? " Existing archived files are kept." : ""}
+      </p>
+      {error && (
+        <div className="form-error" role="alert">
+          {error}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -914,6 +1009,7 @@ function ReviewWorkspace({
   selected,
   onSelect,
   onChanged,
+  onReprocess,
 }: {
   jobs: Job[];
   folders: string[];
@@ -923,6 +1019,7 @@ function ReviewWorkspace({
   selected: Job | null;
   onSelect: (id: string) => void;
   onChanged: () => Promise<void>;
+  onReprocess: (job: Job) => Promise<void>;
 }) {
   return (
     <section className="workspace-grid">
@@ -944,6 +1041,7 @@ function ReviewWorkspace({
             paperRecommendations={paperRecommendations}
             archiveRoot={archiveRoot}
             onChanged={onChanged}
+            onReprocess={onReprocess}
             review
           />
         ) : (
@@ -959,11 +1057,13 @@ function Documents({
   archiveRoot,
   selected,
   onSelect,
+  onReprocess,
 }: {
   jobs: Job[];
   archiveRoot: string;
   selected: Job | null;
   onSelect: (id: string) => void;
+  onReprocess: (job: Job) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const visible = jobs.filter((job) =>
@@ -1004,6 +1104,7 @@ function Documents({
               folders={[]}
               archiveRoot={archiveRoot}
               onChanged={async () => {}}
+              onReprocess={onReprocess}
             />
           ) : (
             <EmptyState icon={<Files />} title="Select a document" />
@@ -1089,6 +1190,7 @@ function JobDetail({
   archiveRoot,
   onChanged,
   review,
+  onReprocess,
 }: {
   job: Job;
   folders: string[];
@@ -1097,6 +1199,7 @@ function JobDetail({
   archiveRoot: string;
   onChanged: () => Promise<void>;
   review?: boolean;
+  onReprocess: (job: Job) => Promise<void>;
 }) {
   const classification = job.classification;
   const [folder, setFolder] = useState(classification.suggested_folder || "");
@@ -1200,6 +1303,12 @@ function JobDetail({
           <CircleAlert /> {job.error}
         </div>
       )}
+      <ReprocessButton
+        key={job.id}
+        job={job}
+        onReprocess={onReprocess}
+        disabled={saving}
+      />
       <div className="fact-row">
         <Fact
           label="Sender"
@@ -1416,20 +1525,6 @@ function JobDetail({
             </button>
           </div>
         </section>
-      )}
-      {review && job.status === "failed" && (
-        <div className="review-actions">
-          <button
-            type="button"
-            className="primary-button"
-            onClick={async () => {
-              await api.retry(job.id);
-              await onChanged();
-            }}
-          >
-            <RotateCcw /> Retry from inbox
-          </button>
-        </div>
       )}
       <DocumentPreview job={job} />
     </article>
