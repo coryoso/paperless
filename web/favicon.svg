@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>paperless</title>
+  <rect width="64" height="64" rx="16" fill="#ea653f" />
+  <path d="M20 10h18l10 10v30a4 4 0 0 1-4 4H20a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4Z" fill="#fffaf5" />
+  <path d="M38 10v10h10Z" fill="#ffc6a8" />
+  <path d="M24 30h16M24 38h16M24 46h9" fill="none" stroke="#a73e22" stroke-linecap="round" stroke-width="4" />
+</svg>
