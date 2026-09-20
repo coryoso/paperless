@@ -2,6 +2,7 @@ package embeddings
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -98,5 +99,34 @@ func TestChunksPreserveLongUnicodeDocument(t *testing.T) {
 	}
 	if _, err = Chunks(" \n"); err == nil {
 		t.Fatal("accepted empty text")
+	}
+}
+
+func TestEmbedDistinguishesInputErrorsFromServiceFailures(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		status     int
+		message    string
+		inputError bool
+	}{
+		{"context overflow", 400, "the input length exceeds the context length", true},
+		{"unsupported model", 400, "this model does not support embeddings", false},
+		{"missing model", 404, "model not found", false},
+		{"outage", 503, "service unavailable", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.status)
+				json.NewEncoder(w).Encode(map[string]string{"error": test.message})
+			}))
+			defer server.Close()
+			cfg := config.Default().Embeddings
+			cfg.Endpoint = server.URL
+			_, err := (Client{Config: cfg}).Embed(t.Context(), []string{"document"})
+			var inputError *InputError
+			if err == nil || errors.As(err, &inputError) != test.inputError {
+				t.Fatalf("unexpected error classification: %v", err)
+			}
+		})
 	}
 }

@@ -10,6 +10,7 @@ type DocumentEmbedding struct {
 	ModelKey    string `json:"model_key"`
 	Dimensions  int64  `json:"dimensions"`
 	IndexedAt   string `json:"indexed_at"`
+	Centroid    []byte `json:"centroid"`
 }
 
 type EmbeddingChunk struct {
@@ -59,12 +60,17 @@ type Job struct {
 	TextSource             string  `json:"text_source"`
 }
 
+type RecipientAddress struct {
+	Address string `json:"address"`
+}
+
 type RecipientProfile struct {
 	ID           int64  `json:"id"`
 	Name         string `json:"name"`
 	Scope        string `json:"scope"`
 	Aliases      string `json:"aliases"`
 	FolderPrefix string `json:"folder_prefix"`
+	Addresses    string `json:"addresses"`
 }
 
 type RoutingExample struct {

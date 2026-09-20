@@ -81,6 +81,7 @@ func (p *Processor) indexSimilarity(ctx context.Context) {
 		return
 	}
 	failures := map[string]string{}
+documents:
 	for _, job := range jobs {
 		if ctx.Err() != nil {
 			return
@@ -119,6 +120,11 @@ func (p *Processor) indexSimilarity(ctx context.Context) {
 			for start := 0; start < len(chunks); start += 8 {
 				batch, err := client.Embed(ctx, chunks[start:min(start+8, len(chunks))])
 				if err != nil {
+					var inputErr *embeddings.InputError
+					if errors.As(err, &inputErr) {
+						failures[job.ID] = inputErr.Error()
+						continue documents
+					}
 					fail(err)
 					return
 				}

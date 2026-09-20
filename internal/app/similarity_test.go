@@ -148,3 +148,74 @@ func TestEmbeddingSetupKeepsClassifierAndRejectsRemoteEndpoint(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+func TestSimilaritySkipsRejectedDocumentAndRecovers(t *testing.T) {
+	var reject atomic.Bool
+	reject.Store(true)
+	var healthyCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" {
+			json.NewEncoder(w).Encode(map[string]any{"models": []map[string]string{{"name": "embeddinggemma:latest", "digest": "test"}}})
+			return
+		}
+		var input struct {
+			Input []string `json:"input"`
+		}
+		json.NewDecoder(r.Body).Decode(&input)
+		if strings.Contains(input.Input[0], "rejected") && reject.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"the input length exceeds the context length"}`))
+			return
+		}
+		healthyCalls.Add(1)
+		json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{1, 0}}})
+	}))
+	defer server.Close()
+	cfg := testServerConfig(t.TempDir())
+	cfg.Embeddings.Enabled = true
+	cfg.Embeddings.Endpoint = server.URL
+	p, cleanup, err := newProcessor(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	for i, id := range []string{"rejected", "healthy-document"} {
+		stamp := "2026-09-20T00:00:00Z"
+		if i == 1 {
+			stamp = "2026-09-19T00:00:00Z"
+		}
+		if err := p.store.Queries.CreateJob(t.Context(), sqlc.CreateJobParams{ID: id, Status: StatusNeedsReview, SourceFilename: id + ".pdf", ScanTimestamp: stamp, UpdatedAt: stamp}); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(cfg.Paths.Processing, id)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "document.md"), []byte(id), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		p.indexSimilarity(t.Context())
+		state := p.similaritySnapshot()
+		if state.Status != "ready" || state.Indexed != 1 || state.Skipped != 1 || state.Failures["rejected"] == "" {
+			t.Fatalf("rejected document blocked healthy indexing: %+v", state)
+		}
+	}
+	if healthyCalls.Load() != 1 {
+		t.Fatalf("healthy document not cached: calls=%d", healthyCalls.Load())
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.SetPathValue("jobID", "rejected")
+	w := httptest.NewRecorder()
+	p.handleSimilarDocumentsAPI(w, req)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"no_text"`) || !strings.Contains(w.Body.String(), "context limit") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	reject.Store(false)
+	p.indexSimilarity(t.Context())
+	state := p.similaritySnapshot()
+	if state.Status != "ready" || state.Indexed != 2 || state.Skipped != 0 || len(state.Failures) != 0 {
+		t.Fatalf("corrected document did not recover: %+v", state)
+	}
+}

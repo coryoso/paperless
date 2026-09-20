@@ -209,15 +209,31 @@ describe("first-run guide", () => {
 
 describe("document similarity", () => {
   it("keeps embedding settings independent of classification", async () => {
-    globalThis.fetch = mock(() => Promise.resolve(new Response('{"restarting":true}', { status: 202 }))) as unknown as typeof fetch;
-    const settings = { enabled: true, endpoint: "http://127.0.0.1:11434", model: "embeddinggemma" };
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response('{"restarting":true}', { status: 202 })),
+    ) as unknown as typeof fetch;
+    const settings = {
+      enabled: true,
+      endpoint: "http://127.0.0.1:11434",
+      model: "embeddinggemma",
+    };
     await api.setEmbeddings(settings);
-    expect(fetch).toHaveBeenCalledWith("/api/setup/embeddings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) });
+    expect(fetch).toHaveBeenCalledWith("/api/setup/embeddings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
   });
   it("loads comparisons with a cancellation signal for document switches", async () => {
     const signal = new AbortController().signal;
-    const payload = { status: "indexing" as const, message: "Preparing comparisons", matches: [] };
-    globalThis.fetch = mock(() => Promise.resolve(new Response(JSON.stringify(payload)))) as unknown as typeof fetch;
+    const payload = {
+      status: "indexing" as const,
+      message: "Preparing comparisons",
+      matches: [],
+    };
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(JSON.stringify(payload))),
+    ) as unknown as typeof fetch;
     await expect(api.similar("job-1", signal)).resolves.toEqual(payload);
     expect(fetch).toHaveBeenCalledWith("/api/jobs/job-1/similar", { signal });
   });

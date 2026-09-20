@@ -20,6 +20,12 @@ import (
 
 type Client struct{ Config config.Embeddings }
 
+// InputError identifies content rejected by the model, rather than an outage.
+// The worker can skip this document without disabling the rest of the index.
+type InputError struct{ Message string }
+
+func (e *InputError) Error() string { return e.Message }
+
 func (c Client) request(ctx context.Context, method, path string, input, output any) error {
 	if err := c.Config.Validate(); err != nil {
 		return err
@@ -46,6 +52,17 @@ func (c Client) request(ctx context.Context, method, path string, input, output 
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		var response struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&response)
+		// Ollama reports context overflow as a 400. Do not mistake missing
+		// models, unsupported models, or server failures for document errors.
+		detail := strings.ToLower(response.Error)
+		if path == "/api/embed" && res.StatusCode == http.StatusBadRequest &&
+			(strings.Contains(detail, "input length") || strings.Contains(detail, "context length")) {
+			return &InputError{Message: "Document text exceeds the embedding model's context limit."}
+		}
 		return fmt.Errorf("Ollama embeddings returned HTTP %d; ensure model %q is installed", res.StatusCode, c.Config.Model)
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 16<<20)).Decode(output); err != nil {

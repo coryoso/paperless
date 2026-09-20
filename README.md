@@ -98,7 +98,7 @@ model = "embeddinggemma"
 timeout_seconds = 120
 ```
 
-Similarity is optional and disabled by default. Disabling it stops indexing and comparisons while retaining the rebuildable index. This first version uses exact section comparisons; retrieval quality and latency should be evaluated on your archive before using similarity to influence filing suggestions.
+Similarity is optional and disabled by default. Disabling it stops indexing and comparisons while retaining the rebuildable index. Search first selects up to 32 approved documents by their mean section vector, then compares passages within those candidates. This bounds passage comparison work as the archive grows, but can omit a matching passage in a document with otherwise different content. Existing caches without document vectors rebuild automatically after upgrading. Retrieval quality should be evaluated on your archive before using similarity to influence filing suggestions.
 
 ### Connect a network scanner
 

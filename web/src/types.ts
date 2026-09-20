@@ -46,13 +46,27 @@ export type Job = {
 };
 
 export type SimilarityResult = {
- status: "disabled" | "indexing" | "ready" | "unavailable" | "no_text";
- message: string;
- matches: { job_id: string; filename: string; folder: string; recipient: string; recipient_scope: string; document_type: string; excerpt: string; query_excerpt: string }[];
+  status: "disabled" | "indexing" | "ready" | "unavailable" | "no_text";
+  message: string;
+  matches: {
+    job_id: string;
+    filename: string;
+    folder: string;
+    recipient: string;
+    recipient_scope: string;
+    document_type: string;
+    excerpt: string;
+    query_excerpt: string;
+  }[];
 };
 
 export type Dashboard = {
- similarity?: { status: string; message: string; indexed: number; skipped: number };
+  similarity?: {
+    status: string;
+    message: string;
+    indexed: number;
+    skipped: number;
+  };
   paper_recommendations?: Record<string, string>;
   database_backup?: {
     directory: string;

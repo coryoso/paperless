@@ -15,7 +15,7 @@ import (
 )
 
 type Config struct {
-	Embeddings Embeddings `toml:"embeddings"`
+	Embeddings         Embeddings         `toml:"embeddings"`
 	Paths              Paths              `toml:"paths"`
 	Service            Service            `toml:"service"`
 	OCR                OCR                `toml:"ocr"`
