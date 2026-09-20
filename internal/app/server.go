@@ -197,6 +197,7 @@ func (p *Processor) serve(ctx context.Context) error {
 	}
 	defer stopRelay()
 	defer p.dashboardEvents.close()
+	defer p.runs.changes.close()
 	workersDone := make(chan struct{})
 	go func() { defer close(workersDone); p.processUploadQueue(workerCtx) }()
 	defer func() { stopWorkers(); <-workersDone }()
@@ -242,6 +243,7 @@ func (p *Processor) serve(ctx context.Context) error {
 			restarting.Store(true)
 		}
 		p.dashboardEvents.close()
+		p.runs.changes.close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
@@ -370,6 +372,11 @@ func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	clientID := r.FormValue("upload_id")
+	if len(clientID) > 128 {
+		writeAPIError(w, errors.New("upload ID is too long"), http.StatusBadRequest)
+		return
+	}
 	filename := filepath.Base(header.Filename)
 	if !supportedInputs[strings.ToLower(filepath.Ext(filename))] {
 		writeAPIError(w, fmt.Errorf("unsupported file type: %s", filepath.Ext(filename)), http.StatusBadRequest)
@@ -377,7 +384,7 @@ func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	runID := randomID()
 	jobID := randomID()
-	state := p.runs.create(runID)
+	state := p.runs.create(runID, clientID)
 	state.publish(progressEvent("upload", "received", "Upload received by server.", 4))
 	uploadDir := filepath.Join(p.cfg.Paths.Processing, "uploads", runID)
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {

@@ -127,6 +127,12 @@ export type ProgressEvent = {
   done?: boolean;
 };
 
+export type UploadProgress = {
+  run_id: string;
+  client_upload_id: string;
+  events: ProgressEvent[];
+};
+
 export type OCRPage = {
   page: number;
   width: number;

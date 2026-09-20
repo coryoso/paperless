@@ -1266,11 +1266,25 @@ button:disabled {
   .masthead-inner {
     padding-top: 14px;
   }
-  .brand-row { gap: 6px; align-items: center; flex-wrap: wrap; }
-  .brand-mark { width: 30px; height: 30px; font-size: 16px; }
-  .brand strong { font-size: 14px; }
-  .brand { gap: 5px; }
-  .brand span { display: none; }
+  .brand-row {
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+    font-size: 16px;
+  }
+  .brand strong {
+    font-size: 14px;
+  }
+  .brand {
+    gap: 5px;
+  }
+  .brand span {
+    display: none;
+  }
   .nav-button {
     padding: 7px;
   }

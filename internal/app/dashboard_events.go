@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"sync"
@@ -64,6 +65,13 @@ func (p *Processor) handleDashboardEvents(w http.ResponseWriter, r *http.Request
 	}
 	updates, unsubscribe := p.dashboardEvents.subscribe()
 	defer unsubscribe()
+	var uploadUpdates <-chan struct{}
+	if p.runs != nil {
+		var stopUploads func()
+		uploadUpdates, stopUploads = p.runs.changes.subscribe()
+		defer stopUploads()
+	}
+	sentUploads := make(map[string]int)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -94,6 +102,21 @@ func (p *Processor) handleDashboardEvents(w http.ResponseWriter, r *http.Request
 			}
 		case <-heartbeat.C:
 			if err := write(": keep-alive\n\n"); err != nil {
+				return
+			}
+		case _, ok := <-uploadUpdates:
+			if !ok {
+				return
+			}
+			snapshots := p.runs.snapshotsSince(sentUploads)
+			if len(snapshots) == 0 {
+				continue
+			}
+			payload, err := json.Marshal(snapshots)
+			if err != nil {
+				return
+			}
+			if err := write("event: uploads\ndata: " + string(payload) + "\n\n"); err != nil {
 				return
 			}
 		}

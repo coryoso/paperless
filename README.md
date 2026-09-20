@@ -137,7 +137,7 @@ The dashboard receives live change notifications over Server-Sent Events at `/ap
 
 Within the service these notifications go directly to connected browsers. Separate CLI processes relay their pipeline notifications to the running service using a private discovery record in the state directory and an authenticated internal HTTP endpoint. This works with the configured host and port and keeps different state directories separate. An unavailable dashboard never fails document processing; reconnecting clients fetch a fresh snapshot.
 
-The browser reconnects automatically after interruptions and catches up when a hidden tab becomes visible again. SSE uses the dashboard's own host and port, so it also works when accessing a reachable service from another machine. Reverse proxies must allow streaming responses without buffering; the service sends idle heartbeats and an `X-Accel-Buffering: no` header.
+Each browser tab shares one SSE connection for dashboard notifications and progress from all its uploads, keeping HTTP/1.1 connections available for API requests even during large upload batches. The browser reconnects automatically after interruptions and catches up when a hidden tab becomes visible again. Reconnecting replays retained upload progress without duplicating events; durable job status settles uploads whose in-memory history was lost during a service restart. SSE uses the dashboard's own host and port, so it also works when accessing a reachable service from another machine. Reverse proxies must allow streaming responses without buffering; the service sends idle heartbeats and an `X-Accel-Buffering: no` header.
 
 Choose a different port during command-line setup with:
 

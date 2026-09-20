@@ -1,15 +1,31 @@
-// A single SSE connection invalidates the dashboard. EventSource reconnects
-// automatically; the server sends an invalidation on every new connection.
+import type { UploadProgress } from "./types";
+
+// A single SSE connection carries dashboard changes and all upload progress.
+// Reconnecting replays retained upload histories and invalidates the dashboard.
 export function startDashboardRefresh(
   refresh: () => void,
-  page: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener"> = document,
+  onUploads: (updates: UploadProgress[]) => void = () => {},
+  page: Pick<
+    Document,
+    "visibilityState" | "addEventListener" | "removeEventListener"
+  > = document,
   browser: Pick<Window, "addEventListener" | "removeEventListener"> = window,
   connect: (url: string) => EventSource = (url) => new EventSource(url),
 ): () => void {
   let stream: EventSource | null = null;
-  const update = () => { if (page.visibilityState === "visible") refresh(); };
+  const update = () => {
+    if (page.visibilityState === "visible") refresh();
+  };
+  const uploads = (message: Event) => {
+    const snapshots = JSON.parse(
+      (message as MessageEvent).data,
+    ) as UploadProgress[];
+    onUploads(snapshots);
+    if (snapshots.some((snapshot) => snapshot.events.at(-1)?.done)) update();
+  };
   const disconnect = () => {
     stream?.removeEventListener("dashboard", update);
+    stream?.removeEventListener("uploads", uploads);
     stream?.close();
     stream = null;
   };
@@ -22,9 +38,13 @@ export function startDashboardRefresh(
       disconnect();
       stream = connect("/api/dashboard/events");
       stream.addEventListener("dashboard", update);
+      stream.addEventListener("uploads", uploads);
     }
   };
-  const catchUp = () => { resume(); update(); };
+  const catchUp = () => {
+    resume();
+    update();
+  };
   resume();
   page.addEventListener("visibilitychange", resume);
   browser.addEventListener("focus", catchUp);
@@ -59,7 +79,9 @@ export function createDashboardLoader<T>(
         clearTimeout(retry);
         dirty = false;
         try {
-          const snapshot = await fetchSnapshot(AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]));
+          const snapshot = await fetchSnapshot(
+            AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+          );
           if (!disposed) accept(snapshot);
         } catch (reason) {
           if (!disposed) {
@@ -78,6 +100,10 @@ export function createDashboardLoader<T>(
   };
   return {
     load,
-    dispose: () => { disposed = true; clearTimeout(retry); controller.abort(); },
+    dispose: () => {
+      disposed = true;
+      clearTimeout(retry);
+      controller.abort();
+    },
   };
 }

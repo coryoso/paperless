@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +20,44 @@ import (
 	"paperless/internal/db/sqlc"
 	"paperless/internal/progress"
 )
+
+func TestUploadCorrelatesProgressWithClientBeforeProcessing(t *testing.T) {
+	p, cleanup, err := newProcessor(t.Context(), testServerConfig(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	file, err := form.CreateFormFile("document", "scan.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("test upload")); err != nil {
+		t.Fatal(err)
+	}
+	if err := form.WriteField("upload_id", "browser-upload-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := form.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/uploads", &body)
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	response := httptest.NewRecorder()
+	p.handleUploadAPI(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("upload: %d %s", response.Code, response.Body.String())
+	}
+	var result map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	snapshots := p.runs.snapshotsSince(make(map[string]int))
+	if len(snapshots) != 1 || snapshots[0].RunID != result["run_id"] || snapshots[0].ClientID != "browser-upload-1" || len(snapshots[0].Events) == 0 {
+		t.Fatalf("upload progress = %#v", snapshots)
+	}
+}
 
 func TestParseOCRBoxesUsesWordRows(t *testing.T) {
 	boxes := parseOCRBoxes("level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n5\t1\t1\t1\t1\t1\t12\t34\t56\t18\t92.5\tFinanzamt\n4\t1\t1\t1\t1\t0\t10\t30\t100\t25\t-1\tignored\n5\t1\t1\t1\t1\t2\t70\t34\t44\t18\t-1\tlow\n")

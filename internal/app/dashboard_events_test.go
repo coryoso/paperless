@@ -3,7 +3,9 @@ package app
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"paperless/internal/progress"
 )
 
 func TestDashboardEventsCoalesceAndClose(t *testing.T) {
@@ -163,6 +167,58 @@ func TestDashboardSSEIdleHeartbeat(t *testing.T) {
 		}
 		if !strings.Contains(writer.Body.String(), ": keep-alive\n\n") {
 			t.Fatal("no idle heartbeat")
+		}
+	})
+}
+
+func TestDashboardSSEMultiplexesUploadProgressAndReplaysCompletion(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := &Processor{runs: newRunRegistry()}
+		for connection := 0; connection < 2; connection++ {
+			ctx, cancel := context.WithCancel(t.Context())
+			writer := httptest.NewRecorder()
+			go p.handleDashboardEvents(writer, httptest.NewRequest(http.MethodGet, "/api/dashboard/events", nil).WithContext(ctx))
+			synctest.Wait()
+			if connection == 0 {
+				for i := 0; i < 10; i++ {
+					state := p.runs.create(fmt.Sprintf("run-%d", i), fmt.Sprintf("client-%d", i))
+					state.publish(progress.Event{Percent: 40})
+					state.finish(nil)
+				}
+				p.dashboardEvents.publish()
+				synctest.Wait()
+			}
+			cancel()
+			synctest.Wait()
+			// Read the recorder only after the handler stops, including under -race.
+			if !strings.Contains(writer.Body.String(), "event: dashboard\n") {
+				t.Fatal("missing dashboard event")
+			}
+			completed := make(map[string]bool)
+			for _, frame := range strings.Split(writer.Body.String(), "\n\n") {
+				payload, ok := strings.CutPrefix(frame, "event: uploads\ndata: ")
+				if !ok {
+					continue
+				}
+				var snapshots []uploadSnapshot
+				if err := json.Unmarshal([]byte(payload), &snapshots); err != nil {
+					t.Fatal(err)
+				}
+				for _, snapshot := range snapshots {
+					if snapshot.ClientID == "" {
+						t.Fatal("missing upload correlation ID")
+					}
+					completed[snapshot.RunID] = snapshot.Events[len(snapshot.Events)-1].Done
+				}
+			}
+			if len(completed) != 10 {
+				t.Fatalf("connection %d received %d uploads", connection, len(completed))
+			}
+			for id, done := range completed {
+				if !done {
+					t.Fatalf("missing completion for %s", id)
+				}
+			}
 		}
 	})
 }
