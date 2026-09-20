@@ -22,13 +22,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api } from "./api";
-import {
-  documentTypes,
-  recipientScopes,
-  replaceFilenameDocumentType,
-  savedRecipientChoice,
-  learnedAlias,
-} from "./review";
+import { createDashboardLoader, startDashboardRefresh } from "./refresh";
+import { documentTypes, recipientScopes, replaceFilenameDocumentType, savedRecipientChoice, learnedAlias } from "./review";
 import { FolderPicker } from "./FolderPicker";
 import { TextPreview } from "./TextPreview";
 import { SetupGuide } from "./SetupGuide";
@@ -97,25 +92,23 @@ function App() {
   const [selectedUploadID, setSelectedUploadID] = useState("");
   const [uploads, setUploads] = useState<UploadTask[]>([]);
   const streamsRef = useRef(new Map<string, EventSource>());
-
-  const load = useCallback(async () => {
-    try {
+  const loader = useMemo(() => createDashboardLoader(api.dashboard,
+    (next) => {
       setError("");
-      const next = await api.dashboard();
       setDashboard(next);
-      if (next.settings.setup_required) setView("settings");
-      setSelectedID(
-        (current) =>
-          current || next.review_jobs[0]?.id || next.recent_jobs[0]?.id || "",
-      );
-    } catch (reason) {
-      setError(errorMessage(reason));
-    } finally {
       setLoading(false);
-    }
-  }, []);
+      if (next.settings.setup_required) setView("settings");
+      setSelectedID((current) => current || next.review_jobs[0]?.id || next.recent_jobs[0]?.id || "");
+    },
+    (reason) => { setError(errorMessage(reason)); setLoading(false); },
+  ), []);
+  const load = loader.load;
 
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void load();
+    const stop = startDashboardRefresh(() => void load());
+    return () => { stop(); loader.dispose(); };
+  }, [load, loader]);
 
   useEffect(
     () => () => {
@@ -141,20 +134,9 @@ function App() {
     activeUploadCount +
     processingJobs.filter((job) => !representedJobs.has(job.id)).length;
 
-  useEffect(() => {
-    if (!processingCount) return;
-    const timer = window.setInterval(() => void load(), 2500);
-    return () => window.clearInterval(timer);
-  }, [load, processingCount]);
-
-  const updateUpload = useCallback(
-    (id: string, update: (item: UploadTask) => UploadTask) => {
-      setUploads((current) =>
-        current.map((item) => (item.id === id ? update(item) : item)),
-      );
-    },
-    [],
-  );
+  const updateUpload = useCallback((id: string, update: (item: UploadTask) => UploadTask) => {
+    setUploads((current) => current.map((item) => item.id === id ? update(item) : item));
+  }, []);
 
   const appendUploadEvent = useCallback(
     (id: string, event: ProgressEvent) => {
@@ -328,29 +310,14 @@ function App() {
             </nav>
           </div>
 
-          <div className="header-grid">
+          {!dashboard.settings.setup_required && view === "overview" && <div className="header-grid">
             <div className="welcome-block">
               <span className="eyebrow">Local document flow</span>
-              <h1>
-                {dashboard.settings.setup_required
-                  ? "Choose where your documents belong"
-                  : dashboard.stats.review
-                    ? `${dashboard.stats.review} document${dashboard.stats.review === 1 ? "" : "s"} waiting`
-                    : "Your archive is up to date"}
-              </h1>
-              <div className="path-line">
-                <Inbox />{" "}
-                <span>{dashboard.settings.inbox || "Loading inbox..."}</span>
-              </div>
+              <h1>{dashboard.stats.review ? `${dashboard.stats.review} document${dashboard.stats.review === 1 ? "" : "s"} waiting` : "Your archive is up to date"}</h1>
+              <div className="path-line"><Inbox /> <span>{dashboard.settings.inbox || "Loading inbox..."}</span></div>
             </div>
-            {!dashboard.settings.setup_required && (
-              <UploadPanel
-                activeCount={activeUploadCount}
-                onFiles={enqueueFiles}
-                onOpenQueue={() => setView("processing")}
-              />
-            )}
-          </div>
+            <UploadPanel activeCount={activeUploadCount} onFiles={enqueueFiles} onOpenQueue={() => setView("processing")} />
+          </div>}
         </div>
       </header>
 

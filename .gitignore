@@ -18,6 +18,8 @@ web/node_modules/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+.dashboard-notify.json
+.dashboard-notify-*
 
 # Local operator config may contain private paths.
 config.toml

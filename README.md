@@ -133,6 +133,12 @@ paperless backup
 
 The private user configuration is `~/.paperless/config.toml` in the home directory of the user running Paperless (unless overridden with `paperless --config /path/to/config.toml …`). On a fresh installation, Paperless uses built-in defaults without creating this file. The setup guide creates it when you choose the documents folder; `paperless configure` also creates it. The `.paperless` folder is hidden in Finder; use **Go → Go to Folder** and enter `~/.paperless`. The dashboard binds to loopback port `8844` by default, but its URL is derived from the configured host and port rather than being fixed in the application. `paperless url` always prints the address for the current configuration.
 
+The dashboard receives live change notifications over Server-Sent Events at `/api/dashboard/events`, then fetches a fresh snapshot. The processing pipeline explicitly publishes after saving each document stage, including received, processing, OCR complete, classified, review, archived, duplicate, and failed. Approval, rejection, recipient edits, folder refreshes, and backups also publish after their changes succeed. There are no database triggers, filesystem watchers, or periodic dashboard checks.
+
+Within the service these notifications go directly to connected browsers. Separate CLI processes relay their pipeline notifications to the running service using a private discovery record in the state directory and an authenticated internal HTTP endpoint. This works with the configured host and port and keeps different state directories separate. An unavailable dashboard never fails document processing; reconnecting clients fetch a fresh snapshot.
+
+The browser reconnects automatically after interruptions and catches up when a hidden tab becomes visible again. SSE uses the dashboard's own host and port, so it also works when accessing a reachable service from another machine. Reverse proxies must allow streaming responses without buffering; the service sends idle heartbeats and an `X-Accel-Buffering: no` header.
+
 Choose a different port during command-line setup with:
 
 ```bash

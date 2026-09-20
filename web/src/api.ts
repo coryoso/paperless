@@ -76,7 +76,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ addresses }),
     }),
-  dashboard: () => request<Dashboard>("/api/dashboard"),
+  dashboard: (signal: AbortSignal = AbortSignal.timeout(10000)) => request<Dashboard>("/api/dashboard", { cache: "no-store", signal }),
   pages: (jobID: string) =>
     request<{ pages: OCRPage[] }>(`/api/jobs/${jobID}/pages`),
   layout: (jobID: string) => request<TextLayout>(`/api/jobs/${jobID}/layout`),
