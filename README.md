@@ -285,3 +285,7 @@ The Paperless repository is the source of truth for releases. Publishing a stabl
 4. updates `Formula/paperless.rb` directly in `coryoso/homebrew`.
 
 Prereleases receive downloadable artifacts but do not update Homebrew. The tap contains only formula definitions and does not create duplicate releases of its own. Signing setup and rotation are documented in [docs/CODE_SIGNING.md](docs/CODE_SIGNING.md).
+
+GitHub's **Generate release notes** uses [.github/release.yml](.github/release.yml) to group merged pull requests into **Features** (`enhancement` label), **Fixes** (`bug` label), and **Miscellaneous** (everything else, including unlabeled PRs).
+
+The [PR labeling workflow](.github/workflows/pr-labels.yml) automatically syncs these labels from conventional PR titles when a PR is opened, edited, reopened, or closed: `feat: ...` and `feat(scope): ...` get `enhancement`; `fix: ...` and `fix(scope): ...` get `bug`. Breaking-change prefixes such as `feat!: ...` and `fix(scope)!: ...` work too. Other prefixes go under Miscellaneous. The workflow manages both category labels, removing stale ones after title changes while preserving unrelated labels. Wait for it to finish before generating release notes.
