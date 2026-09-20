@@ -14,7 +14,7 @@ FORCE ?=
 
 CONFIGURE_FLAGS = --llm-provider "$(LLM_PROVIDER)" $(if $(FORCE),--force) $(if $(BASE),--base "$(BASE)") $(if $(INBOX),--inbox "$(INBOX)") $(if $(ARCHIVE),--archive "$(ARCHIVE)") $(if $(STATE_DIR),--state-dir "$(STATE_DIR)") $(if $(PORT),--port "$(PORT)")
 
-.PHONY: help build web-install web-build web-dev web-test setup configure init init-folders doctor backup run serve open process dry-run model test test-unit test-race acceptance fmt vet check sqlc service-install service-start service-stop service-status
+.PHONY: help build web-install web-build web-dev web-test web-lint web-fmt web-fmt-check setup configure init init-folders doctor backup run serve open process dry-run model test test-unit test-race acceptance fmt fmt-check go-fmt go-fmt-check lint vet check sqlc service-install service-start service-stop service-status
 
 help: ## Show the available commands and optional variables.
 	@awk 'BEGIN {FS = ":.*## "; printf "Paperless local commands\n\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-17s %s\n", $$1, $$2} END {printf "\nVariables: CONFIG, INBOX, BASE, ARCHIVE, STATE_DIR, PORT, FILE, MODEL, LLM_PROVIDER, FORCE\n"}' $(MAKEFILE_LIST)
@@ -26,14 +26,23 @@ build: web-build ## Build the React client and compile the single Paperless bina
 web-install: ## Install the Bun-managed React client dependencies.
 	cd web && bun install --frozen-lockfile
 
-web-build: ## Build the client-side React app for embedding in Go.
+web-build: web-install ## Build the client-side React app for embedding in Go.
 	cd web && bun run build
 
-web-dev: ## Run the React development server with API proxying to Paperless.
+web-dev: web-install ## Run the React development server with API proxying to Paperless.
 	cd web && bun run dev
 
-web-test: ## Run the React client tests.
+web-test: web-install ## Run the React client tests.
 	cd web && bun run test
+
+web-lint: web-install ## Lint the frontend with Biome (read-only).
+	cd web && bun run lint
+
+web-fmt: web-install ## Format the frontend with Biome.
+	cd web && bun run fmt
+
+web-fmt-check: web-install ## Check frontend formatting without changing files.
+	cd web && bun run fmt:check
 
 setup: build ## First-time setup: create config, install dependencies, create folders, and check everything.
 	@if [ ! -f "$(CONFIG)" ]; then \
@@ -78,26 +87,35 @@ dry-run: build ## Analyze one document without filing it: make dry-run FILE=/pat
 model: ## Download the local Ollama model. Override with MODEL=another-tag.
 	ollama pull "$(MODEL)"
 
-test: ## Run the complete Go test suite.
+test: web-build ## Run the complete Go test suite.
 	go test -count=1 ./...
 
-test-unit: ## Run fast isolated tests without local OCR acceptance checks.
+test-unit: web-build ## Run fast isolated tests without local OCR acceptance checks.
 	go test -short -count=1 ./...
 
-test-race: ## Run the test suite with Go's race detector.
+test-race: web-build ## Run the test suite with Go's race detector.
 	go test -race -count=1 ./...
 
-acceptance: ## Test the real OCR pipeline: make acceptance FILE=/path/to/document.pdf
+acceptance: web-build ## Test the real OCR pipeline: make acceptance FILE=/path/to/document.pdf
 	@test -n "$(FILE)" || (echo "FILE is required. Example: make acceptance FILE=/path/to/document.pdf"; exit 2)
 	PAPERLESS_ACCEPTANCE_PDF="$(FILE)" go test -count=1 ./internal/ocr ./internal/app
 
-fmt: ## Format all Go source files.
+fmt: go-fmt web-fmt ## Format Go and frontend source files.
+
+fmt-check: go-fmt-check web-fmt-check ## Check Go and frontend formatting without changing files.
+
+go-fmt: ## Format all Go source files.
 	gofmt -w $$(rg --files cmd internal -g '*.go')
 
-vet: ## Run Go's static checks.
+go-fmt-check: ## Check Go formatting without changing files.
+	@files="$$(gofmt -l cmd internal)"; if [ -n "$$files" ]; then echo "$$files"; exit 1; fi
+
+lint: web-lint vet ## Run Biome linting and Go static checks.
+
+vet: web-build ## Run Go's static checks.
 	go vet ./...
 
-check: web-test web-build fmt vet test ## Build and test the React client and Go application.
+check: fmt-check lint web-test test ## Check formatting, lint, build, and test the frontend and Go application.
 
 sqlc: ## Regenerate type-safe database access after changing SQL.
 	@command -v sqlc >/dev/null || go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest

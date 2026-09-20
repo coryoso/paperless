@@ -1,20 +1,37 @@
 import { expect, test } from "bun:test";
-import { replaceFilenameDocumentType, usesOtherDirectory, splitAddresses } from "./review";
+import {
+  replaceFilenameDocumentType,
+  usesOtherDirectory,
+  splitAddresses,
+} from "./review";
 
 test("keeps postal lines together while separating multiple addresses", () => {
-  expect(splitAddresses(" Musterstraße 12\r\n12345 Berlin\r\n\r\nBüroweg 3, 54321 Hamburg\n"))
-    .toEqual(["Musterstraße 12\n12345 Berlin", "Büroweg 3, 54321 Hamburg"]);
+  expect(
+    splitAddresses(
+      " Musterstraße 12\r\n12345 Berlin\r\n\r\nBüroweg 3, 54321 Hamburg\n",
+    ),
+  ).toEqual(["Musterstraße 12\n12345 Berlin", "Büroweg 3, 54321 Hamburg"]);
   expect(splitAddresses(" \n\n ")).toEqual([]);
 });
 
 test("updates a document type embedded in a review filename", () => {
-  expect(replaceFilenameDocumentType("2025-06-07__total__tax-letter__fuel.pdf", "tax-letter", "receipt"))
-    .toBe("2025-06-07__total__receipt__fuel.pdf");
+  expect(
+    replaceFilenameDocumentType(
+      "2025-06-07__total__tax-letter__fuel.pdf",
+      "tax-letter",
+      "receipt",
+    ),
+  ).toBe("2025-06-07__total__receipt__fuel.pdf");
 });
 
 test("updates a trailing document type", () => {
-  expect(replaceFilenameDocumentType("2025-06-07__total__receipt.pdf", "receipt", "routine-invoice"))
-    .toBe("2025-06-07__total__routine-invoice.pdf");
+  expect(
+    replaceFilenameDocumentType(
+      "2025-06-07__total__receipt.pdf",
+      "receipt",
+      "routine-invoice",
+    ),
+  ).toBe("2025-06-07__total__routine-invoice.pdf");
 });
 
 test("uses the regular folder choice for a known archive folder", () => {
@@ -22,7 +39,9 @@ test("uses the regular folder choice for a known archive folder", () => {
 });
 
 test("uses the other directory field for a new relative folder", () => {
-  expect(usesOtherDirectory("Family/School", ["Tax/2026", "Insurance"])).toBe(true);
+  expect(usesOtherDirectory("Family/School", ["Tax/2026", "Insurance"])).toBe(
+    true,
+  );
 });
 
 test("does not treat an empty destination as another directory", () => {
@@ -31,7 +50,12 @@ test("does not treat an empty destination as another directory", () => {
 
 test("folder navigation exposes immediate children, including implicit parents", async () => {
   const { folderChildren, changeFolderPart } = await import("./review");
-  const folders = ["Tax/2026/Letters", "Tax/2026/Invoices", "Tax/2025", "Family/School"];
+  const folders = [
+    "Tax/2026/Letters",
+    "Tax/2026/Invoices",
+    "Tax/2025",
+    "Family/School",
+  ];
   expect(folderChildren(folders, "")).toEqual(["Family", "Tax"]);
   expect(folderChildren(folders, "Tax")).toEqual(["2025", "2026"]);
   expect(folderChildren(folders, "Tax/2026")).toEqual(["Invoices", "Letters"]);
@@ -44,13 +68,32 @@ test("folder navigation exposes immediate children, including implicit parents",
 test("saved recipients and aliases are preferred within the detected capacity", async () => {
   const { savedRecipientChoice, learnedAlias } = await import("./review");
   const profiles = [
-    { id: 1, name: "Alex Example", scope: "personal", aliases: ["A. Example"], folder_prefix: "" },
-    { id: 2, name: "Alex Example", scope: "sole_proprietor", aliases: [], folder_prefix: "Business" },
+    {
+      id: 1,
+      name: "Alex Example",
+      scope: "personal",
+      aliases: ["A. Example"],
+      folder_prefix: "",
+    },
+    {
+      id: 2,
+      name: "Alex Example",
+      scope: "sole_proprietor",
+      aliases: [],
+      folder_prefix: "Business",
+    },
   ];
-  const c = { recipient: "a-example", recipient_scope: "personal" } as import("./types").Classification;
+  const c = {
+    recipient: "a-example",
+    recipient_scope: "personal",
+  } as import("./types").Classification;
   expect(savedRecipientChoice(c, profiles)).toBe("1");
-  expect(savedRecipientChoice({ ...c, recipient_scope: "unknown" }, profiles)).toBe("");
-  expect(savedRecipientChoice({ ...c, recipient: "Someone else" }, profiles)).toBe("");
+  expect(
+    savedRecipientChoice({ ...c, recipient_scope: "unknown" }, profiles),
+  ).toBe("");
+  expect(
+    savedRecipientChoice({ ...c, recipient: "Someone else" }, profiles),
+  ).toBe("");
   expect(savedRecipientChoice(c, [])).toBe("new");
   expect(learnedAlias("A. Example", profiles[0])).toBe("");
   expect(learnedAlias("Alex Examp1e", profiles[0])).toBe("Alex Examp1e");

@@ -2,6 +2,7 @@
 bin/
 dist/
 web/node_modules/
+/internal/app/webdist/
 /tmp/
 
 # Local runtime state. The service creates these from config.

@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "bun --hot ./dev.ts",
     "build": "tsc --noEmit && bun run ./build.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "lint": "biome lint --error-on-warnings .",
+    "fmt": "biome format --write .",
+    "fmt:check": "biome format ."
   },
   "dependencies": {
     "lucide-react": "latest",
@@ -13,6 +16,7 @@
     "react-dom": "latest"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.14",
     "@types/bun": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",

@@ -210,6 +210,9 @@ make open CONFIG=/tmp/paperless-demo/config.toml
 Common checks:
 
 ```bash
+make fmt
+make fmt-check
+make lint
 make test-unit
 make test
 make web-test
@@ -217,13 +220,17 @@ make acceptance FILE=/path/to/a/real-scan.pdf
 make check
 ```
 
+`make fmt` formats Go with gofmt and the frontend with Biome. `make fmt-check` and `make lint` are read-only checks; both run in CI and before release builds. Frontend-only commands are `make web-fmt`, `make web-fmt-check`, and `make web-lint`. `make check` runs formatting checks, linting, frontend tests, and the full Go test suite.
+
 To check real inference against a running Bonsai 8B server using a synthetic invoice:
 
 ```bash
 PAPERLESS_BONSAI_TEST_ENDPOINT=http://127.0.0.1:8080 go test -count=1 ./internal/classify -run '^TestBonsaiLiveClassification$'
 ```
 
-The React dashboard is built with Bun and embedded into the Go binary. For frontend development, run the API and Bun development server separately:
+The React dashboard source lives in `web/` and is built with Bun and embedded into the Go binary. Generated files in `internal/app/webdist/` are ignored by Git and rebuilt in CI and for every release. The Makefile installs frontend dependencies from the lockfile and builds these assets before Go builds, tests, and vet checks. If invoking Go directly from a fresh checkout, run `make web-build` first.
+
+For frontend development, run the API and Bun development server separately:
 
 ```bash
 make serve
@@ -238,7 +245,7 @@ The OCR pipeline retains the raw text and searchable PDF separately from reconst
 
 The Paperless repository is the source of truth for releases. Publishing a stable semantic-versioned GitHub release, such as `v1.2.3`, triggers one workflow that:
 
-1. tests and builds the web application and native Apple silicon/Intel binaries;
+1. checks formatting and linting, tests the application, builds the web assets from source, and embeds them in native Apple silicon/Intel binaries;
 2. signs the binaries with Developer ID and waits for Apple notarization;
 3. verifies the signatures again after packaging and publishes checksums;
 4. updates `Formula/paperless.rb` directly in `coryoso/homebrew`.

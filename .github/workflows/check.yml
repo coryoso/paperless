@@ -24,24 +24,5 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Install web dependencies
-        working-directory: web
-        run: bun install --frozen-lockfile
-
-      - name: Test the web app
-        working-directory: web
-        run: bun run test
-
-      - name: Build embedded web assets
-        run: |
-          cd web
-          bun run build
-
-      - name: Check Go formatting
-        run: test -z "$(gofmt -l cmd internal)"
-
-      - name: Vet Go code
-        run: go vet ./...
-
-      - name: Test Go code
-        run: go test -short -count=1 ./...
+      - name: Check formatting, lint, build web assets, and test
+        run: make fmt-check lint web-test test-unit

@@ -1,11 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { formatFileSize, isProcessingStatus, isSupportedDocument, pickSupportedDocument, supportedDocuments } from "./upload";
+import {
+  formatFileSize,
+  isProcessingStatus,
+  isSupportedDocument,
+  pickSupportedDocument,
+  supportedDocuments,
+} from "./upload";
 
 describe("upload document selection", () => {
   test("accepts supported MIME types", () => {
-    expect(isSupportedDocument({ name: "letter", type: "application/pdf" })).toBe(true);
+    expect(
+      isSupportedDocument({ name: "letter", type: "application/pdf" }),
+    ).toBe(true);
     expect(isSupportedDocument({ name: "scan", type: "image/png" })).toBe(true);
-    expect(isSupportedDocument({ name: "receipt", type: "image/jpeg" })).toBe(true);
+    expect(isSupportedDocument({ name: "receipt", type: "image/jpeg" })).toBe(
+      true,
+    );
   });
 
   test("accepts supported extensions when the browser provides no MIME type", () => {
@@ -14,7 +24,9 @@ describe("upload document selection", () => {
   });
 
   test("rejects unrelated files", () => {
-    expect(isSupportedDocument({ name: "notes.txt", type: "text/plain" })).toBe(false);
+    expect(isSupportedDocument({ name: "notes.txt", type: "text/plain" })).toBe(
+      false,
+    );
   });
 
   test("picks the first supported document from a multi-file drop", () => {
