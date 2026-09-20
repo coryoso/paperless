@@ -69,6 +69,7 @@ type dashboardResponse struct {
 	RecentJobs           []jobView                 `json:"recent_jobs"`
 	AllJobs              []jobView                 `json:"all_jobs"`
 	RecipientProfiles    []config.RecipientProfile `json:"recipient_profiles"`
+	RecipientAddresses   []string                  `json:"recipient_addresses"`
 	LearningCount        int64                     `json:"learning_count"`
 	LearningPath         string                    `json:"learning_path"`
 }
@@ -192,6 +193,7 @@ func (p *Processor) serve(ctx context.Context) error {
 	mux.HandleFunc("POST /api/jobs/{jobID}/retry", p.handleRetryAPI)
 	mux.HandleFunc("POST /api/folders/refresh", p.handleRefreshFoldersAPI)
 	mux.HandleFunc("POST /api/recipients", p.handleSaveRecipientAPI)
+	mux.HandleFunc("PUT /api/recipient-addresses", p.handleSaveRecipientAddressesAPI)
 	mux.HandleFunc("POST /api/backups", p.handleDatabaseBackupAPI)
 	mux.HandleFunc("POST /api/setup/documents-directory", p.handleChooseDocumentsDirectoryAPI)
 	mux.HandleFunc("POST /api/setup/model", p.handleModelSetupAPI)
@@ -260,6 +262,11 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, err, http.StatusInternalServerError)
 		return
 	}
+	addresses, err := p.store.RecipientAddresses(r.Context())
+	if err != nil {
+		writeAPIError(w, err, http.StatusInternalServerError)
+		return
+	}
 	learningCount, err := p.store.Queries.CountRoutingExamples(r.Context())
 	if err != nil {
 		writeAPIError(w, err, http.StatusInternalServerError)
@@ -273,6 +280,7 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		PaperRecommendations: classify.PaperRecommendations(p.cfg),
 		DatabaseBackup:       databaseBackups(p.cfg.Paths.ArchiveRoot),
 		RecipientProfiles:    profiles,
+		RecipientAddresses:   addresses,
 		LearningCount:        learningCount,
 		LearningPath:         p.cfg.DBPath(),
 		Settings: dashboardSettings{

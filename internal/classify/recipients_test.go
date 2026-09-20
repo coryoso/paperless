@@ -70,6 +70,108 @@ func TestSamePersonBusinessProfileDoesNotMakePersonalMailBusiness(t *testing.T) 
 	}
 }
 
+func TestGbRContextDistinguishesPartnerFromPrivateRecipient(t *testing.T) {
+	cfg := config.Default()
+	cfg.LLM.Enabled = false
+	cfg.RecipientProfiles = []config.RecipientProfile{
+		{ID: 1, Name: "Alex Example", Scope: "personal", FolderPrefix: "Privat"},
+		{ID: 2, Name: "Example & Partner GbR", Scope: "gbr", Aliases: []string{"Alex Example"}, FolderPrefix: "Business"},
+	}
+	address := "Finanzamt\nHerrn Alex Example\nMusterweg 1\n12345 Berlin\n"
+	for _, tt := range []struct {
+		name, text, recipient, scope string
+		review                       bool
+	}{
+		{"partner represents partnership", address + "Alex Example als Empfangsbevollmächtigter der Example & Partner GbR\nUmsatzsteuer 2026", "example-partner-gbr", "gbr", false},
+		{"business taxpayer in subject", address + "Steuerschuldner: Example & Partner GbR\nUmsatzsteuer 2026", "example-partner-gbr", "gbr", false},
+		{"invoice customer", address + "Leistungsempfänger: Example & Partner GbR\nRechnung 123", "example-partner-gbr", "gbr", false},
+		{"personal tax with partnership income", address + "Einkommensteuer 2026\nIhr Gewinnanteil aus Example & Partner GbR", "alex-example", "personal", true},
+		{"business topic alone", address + "Umsatzsteuer 2026", "alex-example", "unknown", true},
+		{"shared name alone", address + "Rechnung 123", "alex-example", "personal", true},
+		{"partnership is sender", "Example & Partner GbR\nHerrn Alex Example\nMusterweg 1\n12345 Berlin\nPrivate Rechnung", "alex-example", "personal", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := Classify(t.Context(), cfg, tt.text, "scan.pdf", time.Now(), []string{"Privat/Steuern", "Business/Steuern"})
+			if c.Recipient != tt.recipient || c.RecipientScope != tt.scope || c.RecipientNeedsReview != tt.review {
+				t.Fatalf("recipient=%s scope=%s review=%v evidence=%q", c.Recipient, c.RecipientScope, c.RecipientNeedsReview, c.RecipientEvidence)
+			}
+			folders := RecipientFolders(cfg, tt.text, []string{"Privat/Steuern", "Business/Steuern"})
+			if tt.scope == "gbr" && (len(folders) != 1 || folders[0] != "Business/Steuern") {
+				t.Fatalf("GbR filing area lost: %v", folders)
+			}
+			if tt.review && len(folders) != 2 {
+				t.Fatalf("prematurely removed candidate folders: %v", folders)
+			}
+		})
+	}
+}
+
+func TestGbRAliasAloneCannotEstablishBusinessCapacity(t *testing.T) {
+	cfg := config.Default()
+	cfg.LLM.Enabled = false
+	cfg.RecipientProfiles = []config.RecipientProfile{{Name: "Example & Partner GbR", Scope: "gbr", Aliases: []string{"Alex Example"}}}
+	c := Classify(t.Context(), cfg, "Herrn Alex Example\nMusterweg 1\n12345 Berlin\nRechnung", "scan.pdf", time.Now(), nil)
+	if c.RecipientScope != "personal" || !c.RecipientNeedsReview || c.Recipient != "alex-example" {
+		t.Fatalf("alias treated as business evidence: %+v", c)
+	}
+}
+
+func TestJointRecipientsNeedBusinessContextForGbRWithoutSuffix(t *testing.T) {
+	for _, tt := range []struct{ name, names, body, scope, typ string }{
+		{"partners joined by und", "Herrn Alex Example und Robin Sample", "Umsatzsteuerbescheid 2026", "gbr", "company"},
+		{"partners joined by ampersand", "Herren Alex Example & Robin Sample", "Gesonderte und einheitliche Feststellung 2026", "gbr", "company"},
+		{"partners on separate lines", "Herrn\nAlex Example\nRobin Sample", "Gewerbesteuerbescheid 2026", "gbr", "company"},
+		{"private couple", "Eheleute Alex Example und Robin Sample", "Einkommensteuerbescheid 2026", "personal", "household"},
+		{"personal tax includes business income", "Eheleute Alex Example und Robin Sample", "Einkommensteuerbescheid 2026\nEinkünfte aus Gewerbebetrieb\nGewinnanteil aus Example & Partner GbR", "personal", "household"},
+		{"joint invoice lacks business evidence", "Herrn Alex Example und Robin Sample", "Rechnung über Strom für Ihre Wohnung", "personal", "household"},
+		{"retail VAT is not business evidence", "Eheleute Alex Example und Robin Sample", "Rechnung\nUmsatzsteuer 19%: EUR 19\nSofa für Ihre Wohnung", "personal", "household"},
+		{"VAT rate is not a tax period", "Eheleute Alex Example und Robin Sample", "Rechnung\nUmsatzsteuer 20%: EUR 20\nSofa für Ihre Wohnung", "personal", "household"},
+		{"joint business account", "Herrn Alex Example und Robin Sample", "Kontoauszug Geschäftskonto", "gbr", "company"},
+		{"single business recipient", "Herrn Alex Example", "Umsatzsteuerbescheid 2026", "unknown", "person"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			text := "Finanzamt\n" + tt.names + "\nMusterweg 1\n12345 Berlin\n" + tt.body
+			folders := []string{"Privat/Steuern", "GbR/Steuern"}
+			base := deterministic(cfg, text, "scan.pdf", time.Now(), folders)
+			if base.RecipientScope != tt.scope || base.RecipientType != tt.typ {
+				t.Fatalf("base=%+v", base)
+			}
+			folder := "Privat/Steuern"
+			if tt.scope == "gbr" {
+				folder = "GbR/Steuern"
+			}
+			c := merge(base, Classification{Recipient: base.Recipient, RecipientType: tt.typ, RecipientScope: tt.scope, SuggestedFolder: folder, Confidence: .96}, cfg, text, time.Now(), folders)
+			if c.RecipientScope != tt.scope || c.RecipientType != tt.typ {
+				t.Fatalf("merge lost context: %+v", c)
+			}
+			if tt.scope == "gbr" && (c.SuggestedFolder != folder || !c.RecipientNeedsReview) {
+				t.Fatalf("inferred partnership should suggest business filing with review: %+v", c)
+			}
+			if tt.scope == "gbr" {
+				candidates := RecipientFolders(cfg, text, folders)
+				if len(candidates) != 1 || candidates[0] != folder {
+					t.Fatalf("joint business offered personal filing: %v", candidates)
+				}
+			}
+			if tt.scope == "personal" && c.SuggestedFolder != folder {
+				t.Fatalf("household should retain private filing: %+v", c)
+			}
+		})
+	}
+}
+
+func TestRecipientFolderCorrectionPreservesCompatibleModelAlternative(t *testing.T) {
+	c := Classification{Recipient: "alex-example-und-robin-sample", RecipientScope: "gbr", SuggestedFolder: "Privat/Steuern", FolderRankings: []FolderRanking{{Folder: "Privat/Steuern", Confidence: .96}, {Folder: "Business/Steuern", Confidence: .94}}}
+	validateRecipientFolder(&c, config.Default())
+	if c.SuggestedFolder != "Business/Steuern" || !c.RecipientNeedsReview || len(c.FolderRankings) != 1 {
+		t.Fatalf("compatible alternative lost: %+v", c)
+	}
+	if FolderFitsRecipient("Business/Steuern", Classification{RecipientScope: "personal"}, nil) {
+		t.Fatal("personal recipient accepted in a business folder")
+	}
+}
+
 func TestApprovedRoutingIsScopedAndRespectsProfileBoundaries(t *testing.T) {
 	cfg := config.Default()
 	cfg.LLM.Enabled = false

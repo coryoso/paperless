@@ -68,6 +68,10 @@ Email and portal PDFs keep their existing text layer when it is complete. Scanne
 
 Filing is intentionally conservative. Approved decisions become local routing examples, but conflicting destinations, unknown recipients, and ambiguous business capacities continue to require review. Moving a file directly in Finder does not teach Paperless.
 
+Mahnungen and Zahlungserinnerungen use the **Payment reminder** document type. Recipient detection considers both the addressee and the document's business context: multiple names can represent a private household or business partners, including a GbR without an explicit legal suffix. Joint business obligations use business filing areas; personal correspondence stays separate. Inferred partnerships and shared personal/business names require confirmation when the identity remains ambiguous.
+
+In **Setup → Recipients & learning**, add **Shared postal addresses** for locations receiving mail for several people, or edit a recipient to save addresses for that person/business. Enter the street and house number followed by the postcode and city, with a blank line between addresses. Detection prioritizes names immediately above matching postal address blocks and recognizes common spellings such as `Straße` and `Str.`. Address associations currently support numeric 4–5 digit postcodes. A shared address never chooses a person by itself; conflicting identities or personal/business evidence still require review. The detected address is shown with the document, and saved address changes apply to subsequent classifications without restarting.
+
 ### Connect a network scanner
 
 The default inbox is `~/Paperless/inbox`. Paperless checks whether it is published as an SMB share and shows the configured folder in Setup.

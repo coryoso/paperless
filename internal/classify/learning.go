@@ -104,7 +104,7 @@ func applyLearnedRouting(c *Classification, examples []RoutingExample) {
 // Include relevant learned destinations before the application caps the folder
 // prompt, so a folder with an unrelated name can still be suggested.
 func LearnedFolders(cfg config.Config, text string, history []RoutingExample, folders []string) []string {
-	recipient, typ := inferRecipient(text)
+	recipient, typ := inferRecipient(text, cfg)
 	c := Classification{Recipient: recipient, RecipientType: typ}
 	assessRecipient(&c, cfg, text)
 	out := []string{}

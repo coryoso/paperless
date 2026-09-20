@@ -1,6 +1,7 @@
 export const documentTypes = [
   "receipt",
   "routine-invoice",
+  "payment-reminder",
   "insurance-letter",
   "insurance-policy",
   "tax-letter",
@@ -22,6 +23,10 @@ export const recipientScopes = [
   { value: "organization", label: "Other organization" },
   { value: "unknown", label: "Unclear" },
 ] as const;
+
+export function splitAddresses(value: string): string[] {
+  return value.replace(/\r\n/g, "\n").split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+}
 
 export function folderChildren(folders: string[], parent: string): string[] {
   const prefix = parent ? `${parent}/` : "";

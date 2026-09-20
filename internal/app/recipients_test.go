@@ -97,6 +97,50 @@ func TestRecipientProfileAPIValidatesCapacityAndFolder(t *testing.T) {
 	}
 }
 
+func TestSavedAddressAssociationReachesClassificationAfterRestart(t *testing.T) {
+	cfg := testServerConfig(t.TempDir())
+	cfg.LLM.Enabled = false
+	p, cleanup, err := newProcessor(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	p.handleSaveRecipientAddressesAPI(response, httptest.NewRequest(http.MethodPut, "/api/recipient-addresses", strings.NewReader(`{"addresses":["Musterweg 12\n12345 Berlin"]}`)))
+	if response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	p.handleSaveRecipientAddressesAPI(response, httptest.NewRequest(http.MethodPut, "/api/recipient-addresses", strings.NewReader(`{}`)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatal("missing addresses must not clear saved associations")
+	}
+	response = httptest.NewRecorder()
+	p.handleSaveRecipientAPI(response, httptest.NewRequest(http.MethodPost, "/api/recipients", strings.NewReader(`{"name":"Alex Example","scope":"personal","addresses":["Musterweg 12\n12345 Berlin"]}`)))
+	if response.Code != http.StatusOK {
+		t.Fatal(response.Body.String())
+	}
+	cleanup()
+	p, cleanup, err = newProcessor(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	text := "Herrn Seller Example\nSenderweg 1\n54321 Hamburg\n\nAlex Example\nMusterweg 12\n12345 Berlin\n\nRechnung"
+	c := p.classifyDocument(t.Context(), text, "scan.pdf", time.Now(), []string{"Personal"}, nil)
+	if c.Recipient != "alex-example" || c.RecipientProfileID == 0 || c.RecipientAddress != "Musterweg 12\n12345 Berlin" {
+		t.Fatalf("saved association not used: %+v", c)
+	}
+	response = httptest.NewRecorder()
+	p.handleDashboardAPI(response, httptest.NewRequest(http.MethodGet, "/api/dashboard", nil))
+	var dashboard dashboardResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &dashboard); err != nil {
+		t.Fatal(err)
+	}
+	if len(dashboard.RecipientAddresses) != 1 || len(dashboard.RecipientProfiles[0].Addresses) != 1 {
+		t.Fatalf("addresses missing from dashboard: %s", response.Body.String())
+	}
+}
+
 func TestSavedRecipientOverrideLearnsAliasOnlyAfterSuccessfulApproval(t *testing.T) {
 	cfg := testServerConfig(t.TempDir())
 	p, cleanup, err := newProcessor(t.Context(), cfg)

@@ -7,6 +7,7 @@ export type Classification = {
   recipient_type: string;
   recipient_scope?: string;
   recipient_evidence?: string;
+  recipient_address?: string;
   recipient_needs_review?: boolean;
   document_date: string;
   summary: string;
@@ -48,6 +49,7 @@ export type Dashboard = {
   paper_recommendations?: Record<string, string>;
   database_backup?: { directory: string; latest: string; count: number; available: boolean };
   recipient_profiles?: RecipientProfile[];
+  recipient_addresses?: string[];
   learning_count?: number;
   learning_path?: string;
   settings: {
@@ -75,7 +77,7 @@ export type Dashboard = {
   all_jobs: Job[];
 };
 
-export type RecipientProfile = { id: number; name: string; scope: string; aliases: string[]; folder_prefix: string };
+export type RecipientProfile = { id: number; name: string; scope: string; aliases: string[]; addresses?: string[]; folder_prefix: string };
 
 export type ProgressEvent = {
   at: string;

@@ -548,6 +548,7 @@ function JobDetail({ job, folders, profiles = [], paperRecommendations = {}, arc
     <header className="detail-head"><div><span className="eyebrow">{displayStatus(job.status)} · {displayInputKind(job.input_kind)}</span><h2>{classification.summary || job.summary || job.source_filename}</h2><p>{job.source_filename}</p></div><div className="confidence-ring"><strong>{Math.round(job.confidence * 100)}%</strong><span>confidence</span></div></header>
     {job.error && <div className="inline-error"><CircleAlert /> {job.error}</div>}
     <div className="fact-row"><Fact label="Sender" value={displayName(classification.sender) || "Unknown"} /><Fact label={recipientScopes.find((scope) => scope.value === classification.recipient_scope)?.label || "Recipient"} value={displayName(classification.recipient) || "Not detected"} /><Fact label="Type" value={displayName(classification.document_type) || "Unknown"} /><Fact label="Pages" value={String(job.page_count || 0)} /></div>
+    {classification.recipient_address && <p className="learning-note">Detected recipient address: {classification.recipient_address.replace(/\n/g, ", ")}</p>}
     {review && job.status === "needs_review" && <section className="routing-form">
       <div className="route-head"><div><span className="eyebrow">Destination</span><h3>{folder ? "Choose the final folder" : "No archive folder matched"}</h3></div><FolderArchive /></div>
       <div className="recipient-review">

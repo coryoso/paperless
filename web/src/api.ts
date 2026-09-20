@@ -21,6 +21,7 @@ export const api = {
   openSharingSettings: () => request<{ ok: boolean }>("/api/setup/open-sharing-settings", { method: "POST" }),
   backupDatabase: () => request<{ path: string }>("/api/backups", { method: "POST" }),
   saveRecipient: (profile: RecipientProfile) => request<{ ok: boolean }>("/api/recipients", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(profile) }),
+  saveRecipientAddresses: (addresses: string[]) => request<{ ok: boolean }>("/api/recipient-addresses", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ addresses }) }),
   dashboard: () => request<Dashboard>("/api/dashboard"),
   pages: (jobID: string) => request<{ pages: OCRPage[] }>(`/api/jobs/${jobID}/pages`),
   layout: (jobID: string) => request<TextLayout>(`/api/jobs/${jobID}/layout`),

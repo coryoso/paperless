@@ -28,7 +28,7 @@ func classifyWithBonsai(ctx context.Context, cfg config.Config, text, filename s
 		reporter.Warn("llm", "context", "Shortened document text for Bonsai; this document will need review.", 0, 0, 91)
 	}
 	fallback := Classification{ModelContextTruncated: truncated}
-	input := fmInput{date.Format("2006-01-02"), filename, text, folders, cfg.RecipientProfiles, examples}
+	input := fmInput{date.Format("2006-01-02"), filename, text, folders, cfg.RecipientProfiles, cfg.RecipientAddresses, examples}
 	prompt, err := json.Marshal(input)
 	if err != nil {
 		return fallback, err
