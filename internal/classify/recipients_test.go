@@ -70,6 +70,33 @@ func TestSamePersonBusinessProfileDoesNotMakePersonalMailBusiness(t *testing.T) 
 	}
 }
 
+func TestSavedCanonicalBusinessNameWithoutLegalSuffix(t *testing.T) {
+	for _, scope := range []string{"gbr", "organization"} {
+		t.Run(scope, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.LLM.Enabled = false
+			cfg.RecipientProfiles = []config.RecipientProfile{{ID: 1, Name: "Example Partners", Scope: scope, FolderPrefix: "Business"}}
+			text := "Supplier\n\nExample Partners\nMusterweg 1\n12345 Berlin\n\nRechnung 123"
+			folders := []string{"Business/Rechnungen", "Privat/Rechnungen"}
+			c := Classify(t.Context(), cfg, text, "scan.pdf", time.Now(), folders)
+			if c.RecipientScope != scope || c.RecipientType != "company" || c.RecipientProfileID != 1 {
+				t.Fatalf("saved business treated as personal: %+v", c)
+			}
+			base := deterministic(cfg, text, "scan.pdf", time.Now(), folders)
+			c = merge(base, Classification{Recipient: "Example Partners", RecipientType: "company", RecipientScope: scope, SuggestedFolder: folders[0]}, cfg, text, time.Now(), folders)
+			if c.RecipientScope != scope || c.SuggestedFolder != folders[0] {
+				t.Fatalf("business folder rejected: %+v", c)
+			}
+			// An exact name shared with a personal profile is still ambiguous.
+			cfg.RecipientProfiles = append(cfg.RecipientProfiles, config.RecipientProfile{ID: 2, Name: "Example Partners", Scope: "personal"})
+			c = Classify(t.Context(), cfg, text, "scan.pdf", time.Now(), folders)
+			if c.RecipientScope != "personal" || !c.RecipientNeedsReview {
+				t.Fatalf("shared canonical name established business capacity: %+v", c)
+			}
+		})
+	}
+}
+
 func TestGbRContextDistinguishesPartnerFromPrivateRecipient(t *testing.T) {
 	cfg := config.Default()
 	cfg.LLM.Enabled = false

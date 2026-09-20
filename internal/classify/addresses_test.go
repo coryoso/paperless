@@ -114,3 +114,30 @@ func TestEquallyPlausibleAddressesAllowGroundedModelRefinement(t *testing.T) {
 		t.Fatalf("ambiguous address refinement=%+v", c)
 	}
 }
+
+func TestAddressResolvedAliasSurvivesModelMerge(t *testing.T) {
+	for _, tt := range []struct{ name, scope, folder, typ string }{
+		{"Example Partners", "gbr", "GbR/Rechnungen", "company"},
+		{"Alexandra Example", "personal", "Privat/Rechnungen", "person"},
+	} {
+		for _, modelRecipient := range []string{"Alex Example", "", "Seller Example"} {
+			t.Run(tt.scope+"/"+modelRecipient, func(t *testing.T) {
+				cfg := config.Default()
+				cfg.RecipientProfiles = []config.RecipientProfile{{ID: 2, Name: tt.name, Scope: tt.scope, Aliases: []string{"Alex Example"}, Addresses: []string{"Bürostraße 8\n12345 Berlin"}, FolderPrefix: strings.Split(tt.folder, "/")[0]}}
+				text := "Seller Example\nSenderweg 1\n54321 Hamburg\n\nAlex Example\nBürostr. 8\n12345 Berlin\n\nRechnung für Beratung"
+				folders := []string{tt.folder}
+				base := deterministic(cfg, text, "scan.pdf", time.Now(), folders)
+				if base.Recipient != Slug(tt.name) || base.RecipientProfileID != 2 {
+					t.Fatalf("address association not established: %+v", base)
+				}
+				c := PreferSavedRecipient(merge(base, Classification{Recipient: modelRecipient, RecipientType: "person", SuggestedFolder: tt.folder}, cfg, text, time.Now(), folders), cfg)
+				if c.Recipient != Slug(tt.name) || c.DetectedRecipient != "alex-example" || c.RecipientProfileID != 2 || c.RecipientScope != tt.scope || c.RecipientType != tt.typ || c.SuggestedFolder != tt.folder || !strings.Contains(c.RecipientAddress, "Bürostr.") || !strings.Contains(c.RecipientEvidence, "Alex Example") {
+					t.Fatalf("address association lost in merge: %+v", c)
+				}
+				if (tt.scope == "gbr" || modelRecipient == "Seller Example") && !c.RecipientNeedsReview {
+					t.Fatalf("ambiguous capacity or conflicting model must require review: %+v", c)
+				}
+			})
+		}
+	}
+}

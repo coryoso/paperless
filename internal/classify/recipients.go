@@ -234,7 +234,7 @@ func assessRecipient(c *Classification, cfg config.Config, text string) {
 		for _, profile := range cfg.RecipientProfiles {
 			// A canonical business name can identify the entity. A partner's
 			// name saved as an alias cannot establish their business capacity.
-			if compactName(c.Recipient) == compactName(profile.Name) && (profile.Scope == "gbr" || profile.Scope == "organization") && c.RecipientType == "company" && len(profileScopes) == 1 {
+			if compactName(c.Recipient) == compactName(profile.Name) && (profile.Scope == "gbr" || profile.Scope == "organization") && len(profileScopes) == 1 {
 				scope = profile.Scope
 			}
 		}
@@ -271,6 +271,18 @@ func assessRecipient(c *Classification, cfg config.Config, text string) {
 }
 
 func mergeRecipient(out *Classification, base, llm Classification, cfg config.Config, text string) {
+	// Ground the merge in the observed addressee, not a canonical profile name
+	// which may never appear in the document. Reassess its capacity and resolve
+	// the saved identity again after accepting any grounded model refinement.
+	if base.DetectedRecipient != "" && grounded(text, base.DetectedRecipient) {
+		base.Recipient = base.DetectedRecipient
+		if observed, ok := addressForRecipient(text, cfg, base.Recipient); ok {
+			base.RecipientType = observed.Type
+		}
+		out.Recipient, out.RecipientType = base.Recipient, base.RecipientType
+	}
+	out.DetectedRecipient = ""
+	out.RecipientProfileID = 0
 	address, addressMatch := addressForRecipient(text, cfg, llm.Recipient)
 	addressRefinement := addressMatch && address.Ambiguous
 	if grounded(text, llm.Recipient) && !genericRecipient(llm.Recipient) {
