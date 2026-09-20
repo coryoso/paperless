@@ -21,6 +21,11 @@ func (p *Processor) classifyDocument(ctx context.Context, text, filename string,
 		reporter.Warn("classify", "recipients", "Could not load recipient profiles; requiring review.", 0, 0, 87)
 	}
 	cfg.RecipientProfiles = append(append([]config.RecipientProfile{}, cfg.RecipientProfiles...), profiles...)
+	addresses, addressErr := p.store.RecipientAddresses(ctx)
+	if addressErr != nil {
+		reporter.Warn("classify", "addresses", "Could not load recipient addresses; requiring review.", 0, 0, 87)
+	}
+	cfg.RecipientAddresses = append(append([]string{}, cfg.RecipientAddresses...), addresses...)
 	rows, historyErr := p.store.Queries.ListRoutingExamples(ctx)
 	if historyErr != nil {
 		reporter.Warn("classify", "learning", "Could not load approved filing examples; requiring review.", 0, 0, 87)
@@ -38,10 +43,29 @@ func (p *Processor) classifyDocument(ctx context.Context, text, filename string,
 	}
 	reporter.Info("classify", "learning", fmt.Sprintf("Loaded %d saved recipient profiles and %d approved routing patterns.", len(profiles), len(history)), 0, 0, 87)
 	c := classify.ClassifyWithHistory(ctx, cfg, text, filename, date, candidates, history, reporter, layout...)
-	if err != nil || historyErr != nil {
+	if err != nil || historyErr != nil || addressErr != nil {
 		c.RecipientNeedsReview = true
 	}
 	return c
+}
+
+func (p *Processor) handleSaveRecipientAddressesAPI(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Addresses *[]string `json:"addresses"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16_384)).Decode(&input); err != nil {
+		writeAPIError(w, err, http.StatusBadRequest)
+		return
+	}
+	if input.Addresses == nil {
+		writeAPIError(w, fmt.Errorf("addresses must be an array; use an empty array to clear saved addresses"), http.StatusBadRequest)
+		return
+	}
+	if err := p.store.SaveRecipientAddresses(r.Context(), *input.Addresses); err != nil {
+		writeAPIError(w, err, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func containsFolder(folders []string, want string) bool {

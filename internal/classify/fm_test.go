@@ -19,9 +19,10 @@ func installFakeFM(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := `#!/bin/sh
+export LC_ALL=C
 input=$(cat)
 case "$1" in
-count-tokens) echo $((${#input} / 4));;
+count-tokens) instructions="$4"; echo $(((${#input} + ${#instructions} + 3) / 4));;
 respond)
   printf '%s' "$input" > "$FM_TEST_PROMPT"
   printf '%s' "$FM_TEST_RESPONSE"

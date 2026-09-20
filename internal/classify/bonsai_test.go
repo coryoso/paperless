@@ -32,6 +32,50 @@ func TestBonsaiLiveClassification(t *testing.T) {
 	}
 }
 
+func TestBonsaiLiveRecipientContext(t *testing.T) {
+	endpoint := os.Getenv("PAPERLESS_BONSAI_TEST_ENDPOINT")
+	if endpoint == "" {
+		t.Skip("set PAPERLESS_BONSAI_TEST_ENDPOINT to test a running Bonsai-8B server")
+	}
+	for _, tt := range []struct{ name, recipient, body, scope, folder string }{
+		{"joint business without suffix", "Herren Alex Example und Robin Sample", "Mahnung\nGewerbesteuer für den gemeinsam betriebenen Gewerbebetrieb.\nDer Betrag von EUR 100 ist seit dem 01.09.2026 überfällig.", "gbr", "GbR/Steuern"},
+		{"private couple", "Eheleute Alex Example und Robin Sample", "Einkommensteuerbescheid 2026\nIhre gemeinsame private Einkommensteuer beträgt EUR 100.", "personal", "Privat/Steuern"},
+		{"person receiving company invoice", "Herrn Alex Example", "Mahnung\nIhre private Bestellung eines Sofas, Rechnung 123, bleibt unbezahlt.\nOffener Betrag EUR 100. Bitte bezahlen Sie bis 30.09.2026.", "personal", "Privat/Rechnungen"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.LLM.Provider = "bonsai"
+			cfg.Bonsai.Endpoint = endpoint
+			text := "Beispiel Verwaltung\n" + tt.recipient + "\nMusterweg 1\n12345 Berlin\n20.09.2026\n" + tt.body
+			folders := RecipientFolders(cfg, text, []string{"GbR/Steuern", "Privat/Steuern", "Privat/Rechnungen"})
+			c := Classify(t.Context(), cfg, text, "scan.pdf", time.Now(), folders)
+			if c.Source != "bonsai" || c.RecipientScope != tt.scope || c.SuggestedFolder != tt.folder {
+				t.Fatalf("live classification=%+v", c)
+			}
+			if strings.Contains(tt.body, "Mahnung") && c.DocumentType != "payment-reminder" {
+				t.Fatalf("reminder misclassified: %+v", c)
+			}
+		})
+	}
+}
+
+func TestBonsaiLiveKnownRecipientAddress(t *testing.T) {
+	endpoint := os.Getenv("PAPERLESS_BONSAI_TEST_ENDPOINT")
+	if endpoint == "" {
+		t.Skip("set PAPERLESS_BONSAI_TEST_ENDPOINT to test a running Bonsai-8B server")
+	}
+	cfg := config.Default()
+	cfg.LLM.Provider = "bonsai"
+	cfg.Bonsai.Endpoint = endpoint
+	cfg.RecipientAddresses = []string{"Musterstraße 12\n12345 Berlin"}
+	cfg.RecipientProfiles = []config.RecipientProfile{{ID: 1, Name: "Alex Example", Scope: "personal", Addresses: cfg.RecipientAddresses, FolderPrefix: "Privat"}}
+	text := "Herrn Seller Example\nAndere Straße 9\n54321 Hamburg\n\nAlex Example\nMusterstr. 12\n12345 Berlin\n\n20.09.2026\nMahnung\nIhre private Bestellung eines Sofas, Rechnung 123, ist überfällig. Bitte überweisen Sie EUR 100.\nIhr Ansprechpartner: Robin Contact"
+	c := Classify(t.Context(), cfg, text, "scan.pdf", time.Now(), []string{"Privat/Rechnungen", "GbR/Rechnungen"})
+	if c.Source != "bonsai" || c.Recipient != "alex-example" || c.RecipientScope != "personal" || c.RecipientProfileID != 1 || c.SuggestedFolder != "Privat/Rechnungen" || c.RecipientAddress == "" {
+		t.Fatalf("live address classification=%+v", c)
+	}
+}
+
 func TestBonsaiClassificationPreservesLocalPoliciesAndContext(t *testing.T) {
 	var prompt string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

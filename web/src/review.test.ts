@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { replaceFilenameDocumentType, usesOtherDirectory } from "./review";
+import { replaceFilenameDocumentType, usesOtherDirectory, splitAddresses } from "./review";
+
+test("keeps postal lines together while separating multiple addresses", () => {
+  expect(splitAddresses(" Musterstraße 12\r\n12345 Berlin\r\n\r\nBüroweg 3, 54321 Hamburg\n"))
+    .toEqual(["Musterstraße 12\n12345 Berlin", "Büroweg 3, 54321 Hamburg"]);
+  expect(splitAddresses(" \n\n ")).toEqual([]);
+});
 
 test("updates a document type embedded in a review filename", () => {
   expect(replaceFilenameDocumentType("2025-06-07__total__tax-letter__fuel.pdf", "tax-letter", "receipt"))

@@ -14,15 +14,16 @@ import (
 )
 
 type Config struct {
-	Paths             Paths              `toml:"paths"`
-	Service           Service            `toml:"service"`
-	OCR               OCR                `toml:"ocr"`
-	LLM               LLM                `toml:"llm"`
-	Bonsai            Bonsai             `toml:"bonsai"`
-	Setup             Setup              `toml:"setup"`
-	Policy            Policy             `toml:"policy"`
-	SenderFolders     map[string]string  `toml:"sender_folders"`
-	RecipientProfiles []RecipientProfile `toml:"recipient_profiles"`
+	Paths              Paths              `toml:"paths"`
+	Service            Service            `toml:"service"`
+	OCR                OCR                `toml:"ocr"`
+	LLM                LLM                `toml:"llm"`
+	Bonsai             Bonsai             `toml:"bonsai"`
+	Setup              Setup              `toml:"setup"`
+	Policy             Policy             `toml:"policy"`
+	SenderFolders      map[string]string  `toml:"sender_folders"`
+	RecipientProfiles  []RecipientProfile `toml:"recipient_profiles"`
+	RecipientAddresses []string           `toml:"recipient_addresses"`
 }
 
 type RecipientProfile struct {
@@ -30,6 +31,7 @@ type RecipientProfile struct {
 	Name         string   `json:"name" toml:"name"`
 	Scope        string   `json:"scope" toml:"scope"`
 	Aliases      []string `json:"aliases" toml:"aliases"`
+	Addresses    []string `json:"addresses" toml:"addresses"`
 	FolderPrefix string   `json:"folder_prefix" toml:"folder_prefix"`
 }
 

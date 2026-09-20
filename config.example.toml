@@ -1,3 +1,7 @@
+# Optional shared delivery addresses. These can also be saved in Setup.
+# Recipient-specific addresses can be entered when editing a recipient there.
+recipient_addresses = [] # e.g. ["Musterstraße 12, 12345 Berlin"]
+
 [paths]
 inbox = "~/Paperless-Inbox"
 raw = "~/Paperless/raw"
