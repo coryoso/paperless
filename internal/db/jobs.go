@@ -49,3 +49,26 @@ func (s *Store) RegisterRawCopy(ctx context.Context, params sqlc.SetRawCopyParam
 	}
 	return duplicate, findErr
 }
+
+// ResetJobForReprocessing clears derived results but keeps document identity,
+// its original source, scan timestamp, and any existing archived file reference.
+func (s *Store) ResetJobForReprocessing(ctx context.Context, jobID, inputPath string) error {
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET current_path=?, status='received',
+ text_path='', text_hash='', page_count=0, input_kind='', text_source='',
+ summary='', classification_json='', confidence=0, physical_original_action='',
+ error='', duplicate_of='', manual_override=0, updated_at=? WHERE id=?`, inputPath, Now(), jobID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM document_embeddings WHERE job_id=?`, jobID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}

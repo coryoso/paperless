@@ -2125,3 +2125,18 @@ button:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+.reprocess-action {
+  margin: 18px 0;
+}
+
+.reprocess-action p {
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.document-detail > .reprocess-action {
+  margin: 0;
+  padding: 0 24px 18px;
+}

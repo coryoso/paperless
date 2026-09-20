@@ -118,6 +118,7 @@ type ocrBox struct {
 }
 
 type uploadWork struct {
+	reprocess  bool
 	jobID      string
 	uploadPath string
 	scanTime   time.Time
@@ -446,7 +447,7 @@ func (p *Processor) processUploadWorker(ctx context.Context) {
 				return
 			}
 			processCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-			processErr := p.processCreatedJob(processCtx, work.jobID, work.uploadPath, work.scanTime, true, work.state.reporter())
+			processErr := p.processCreatedJob(processCtx, work.jobID, work.uploadPath, work.scanTime, true, work.reprocess, work.state.reporter())
 			cancel()
 			work.state.finish(processErr)
 		}
@@ -552,12 +553,12 @@ func (p *Processor) handleRejectAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Processor) handleRetryAPI(w http.ResponseWriter, r *http.Request) {
-	inboxPath, err := p.retryJob(r.Context(), r.PathValue("jobID"))
+	runID, err := p.retryJob(r.Context(), r.PathValue("jobID"))
 	if err != nil {
 		writeAPIError(w, err, http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"inbox_path": inboxPath})
+	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": runID, "job_id": r.PathValue("jobID")})
 }
 
 func (p *Processor) handleRefreshFoldersAPI(w http.ResponseWriter, r *http.Request) {

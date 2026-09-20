@@ -115,7 +115,7 @@ export const api = {
   reject: (jobID: string) =>
     request<{ ok: boolean }>(`/api/jobs/${jobID}/reject`, { method: "POST" }),
   retry: (jobID: string) =>
-    request<{ inbox_path: string }>(`/api/jobs/${jobID}/retry`, {
+    request<{ run_id: string; job_id: string }>(`/api/jobs/${jobID}/retry`, {
       method: "POST",
     }),
   refreshFolders: () =>
