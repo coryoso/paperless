@@ -147,7 +147,9 @@ func Install(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, r
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
 	// This label belongs only to Paperless's Bonsai service. A previous failed
 	// startup can be retried after installation has repaired its files.
-	_ = run("launchctl", "bootout", domain+"/"+serviceLabel)
+	if err := bootoutService(ctx, domain); err != nil {
+		return "", err
+	}
 	// Hold the chosen port until launchd is ready to start the server.
 	if err := listener.Close(); err != nil {
 		return "", err
@@ -171,6 +173,22 @@ func Install(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, r
 		case <-ticker.C:
 		}
 	}
+}
+
+func bootoutService(ctx context.Context, domain string) error {
+	cmd := exec.CommandContext(ctx, "launchctl", "bootout", domain+"/"+serviceLabel)
+	configureInstallCommand(cmd)
+	output, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	// launchctl returns ESRCH (3) when no previous service exists. This is
+	// expected on first installation, so don't print it as a startup failure.
+	if errors.As(err, &exit) && exit.ExitCode() == 3 {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("Bonsai launchctl bootout failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func verifySHA256(path, want string) error {
@@ -197,16 +215,30 @@ func servicePlist(cfg config.Config, dir, home string) ([]byte, error) {
 	// The pinned runtime's Jinja parser rejects constrained JSON with the 8B
 	// template's empty thinking prefix. Its native template path preserves the
 	// same non-thinking model while applying the JSON grammar to content only.
+	ngl := "99"
+	if runtime.GOARCH == "amd64" {
+		ngl = "0" // Match the upstream CPU-only profile for Intel Macs.
+	}
+	// Launch the pinned binary directly. The demo wrapper probes localhost
+	// with curl, which can reach IPv6 or a proxy instead of our IPv4 address,
+	// and mistakes any HTTP response (even a 404) for an existing llama server.
+	// Let the server's actual bind decide whether the selected port is free.
 	return plist.MarshalIndent(map[string]any{
-		"Label":            serviceLabel,
-		"ProgramArguments": []string{"/bin/sh", filepath.Join(dir, "scripts", "start_llama_server.sh"), "--alias", config.DefaultBonsaiModel, "--parallel", "1", "--no-jinja"},
+		"Label": serviceLabel,
+		"ProgramArguments": []string{
+			filepath.Join(dir, "bin", "mac", "llama-server"),
+			"-m", filepath.Join(dir, "models", "gguf", "8B", modelFilename),
+			"--host", "127.0.0.1", "--port", port,
+			"-ngl", ngl, "-fa", "on", "-c", strconv.Itoa(cfg.LLM.ContextTokens),
+			"--temp", "0.5", "--top-p", "0.85", "--top-k", "20", "--min-p", "0",
+			"--reasoning-budget", "0", "--reasoning-format", "none",
+			"--chat-template-kwargs", `{"enable_thinking": false}`,
+			"--alias", config.DefaultBonsaiModel, "--parallel", "1", "--no-jinja",
+		},
 		"WorkingDirectory": dir,
 		"EnvironmentVariables": map[string]string{
-			"HOME":          home,
-			"PATH":          "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-			"BONSAI_FAMILY": "bonsai", "BONSAI_MODEL": "8B",
-			"BONSAI_HOST": "127.0.0.1", "PORT": port,
-			"BONSAI_CTX": strconv.Itoa(cfg.LLM.ContextTokens),
+			"HOME": home,
+			"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
 		},
 		"RunAtLoad": true, "KeepAlive": true, "ThrottleInterval": 30,
 		"StandardOutPath":   filepath.Join(dir, "server.log"),

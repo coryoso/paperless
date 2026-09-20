@@ -1,11 +1,14 @@
 package bonsai
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,13 +40,59 @@ func TestServiceBindsLocallyAndKeepsModelIdentity(t *testing.T) {
 	if service.Label != serviceLabel || !service.KeepAlive {
 		t.Fatalf("service=%+v", service)
 	}
-	if strings.Join(service.ProgramArguments, "|") != "/bin/sh|/Local Data/Bonsai/scripts/start_llama_server.sh|--alias|Bonsai-8B|--parallel|1|--no-jinja" {
+	if service.ProgramArguments[0] != "/Local Data/Bonsai/bin/mac/llama-server" {
 		t.Fatalf("args=%v", service.ProgramArguments)
 	}
-	for k, v := range map[string]string{"BONSAI_FAMILY": "bonsai", "BONSAI_MODEL": "8B", "BONSAI_HOST": "127.0.0.1", "BONSAI_CTX": "8192", "PORT": "8080"} {
-		if service.EnvironmentVariables[k] != v {
-			t.Fatalf("%s=%s", k, service.EnvironmentVariables[k])
+	for flag, want := range map[string]string{
+		"-m":     "/Local Data/Bonsai/models/gguf/8B/" + modelFilename,
+		"--host": "127.0.0.1", "--port": "8080", "-c": "8192",
+		"--alias": "Bonsai-8B", "--parallel": "1", "--reasoning-budget": "0",
+		"--reasoning-format": "none", "--chat-template-kwargs": `{"enable_thinking": false}`,
+	} {
+		if got := argumentValue(service.ProgramArguments, flag); got != want {
+			t.Fatalf("%s=%q, want %q", flag, got, want)
 		}
+	}
+	if service.ProgramArguments[len(service.ProgramArguments)-1] != "--no-jinja" {
+		t.Fatal("missing native JSON template flag")
+	}
+}
+
+func argumentValue(args []string, flag string) string {
+	for i := 1; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func TestBootoutIgnoresOnlyMissingService(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	for _, tt := range []struct {
+		name, script string
+		wantError    bool
+	}{
+		{"stopped", "exit 0", false},
+		{"not installed", "echo 'Boot-out failed: 3: No such process' >&2; exit 3", false},
+		{"permission denied", "echo 'permission denied' >&2; exit 1", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "launchctl"), []byte("#!/bin/sh\n"+tt.script+"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir)
+			err := bootoutService(t.Context(), "gui/123")
+			if (err != nil) != tt.wantError {
+				t.Fatalf("bootout error = %v", err)
+			}
+			if tt.wantError && !strings.Contains(err.Error(), "permission denied") {
+				t.Fatalf("lost launchctl diagnostic: %v", err)
+			}
+		})
 	}
 }
 
@@ -164,13 +213,13 @@ func TestPortSelectionPreservesFreePortAndAvoidsOccupiedPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var service struct{ EnvironmentVariables map[string]string }
+	var service struct{ ProgramArguments []string }
 	if _, err := plist.Unmarshal(data, &service); err != nil {
 		t.Fatal(err)
 	}
 	_, port, _ := net.SplitHostPort(selected.Addr().String())
-	if service.EnvironmentVariables["PORT"] != port {
-		t.Fatalf("service did not use selected port: %v", service.EnvironmentVariables)
+	if argumentValue(service.ProgramArguments, "--port") != port {
+		t.Fatalf("service did not use selected port: %v", service.ProgramArguments)
 	}
 	if err := selected.Close(); err != nil {
 		t.Fatal(err)
@@ -182,6 +231,82 @@ func TestPortSelectionPreservesFreePortAndAvoidsOccupiedPort(t *testing.T) {
 	defer reused.Close()
 	if reused.Addr().String() != selected.Addr().String() {
 		t.Fatal("free configured port was not reused")
+	}
+}
+
+// Opt in with the directory containing the installed pinned binaries and model.
+// Runs only a child process; it never changes the user's launchd service.
+func TestManagedServiceLiveStartupWithIPv6PortOccupied(t *testing.T) {
+	dir := os.Getenv("PAPERLESS_BONSAI_TEST_RUNTIME")
+	if runtime.GOOS != "darwin" || dir == "" {
+		t.Skip("requires macOS and PAPERLESS_BONSAI_TEST_RUNTIME")
+	}
+	ipv4, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ipv4.Close()
+	_, port, _ := net.SplitHostPort(ipv4.Addr().String())
+	ipv6, err := net.Listen("tcp6", "[::1]:"+port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := httptest.NewUnstartedServer(http.NotFoundHandler())
+	other.Listener.Close()
+	other.Listener = ipv6
+	other.Start()
+	defer other.Close()
+
+	cfg := config.Default()
+	cfg.Bonsai.Endpoint = "http://" + ipv4.Addr().String()
+	cfg.LLM.ContextTokens = 4096
+	data, err := servicePlist(cfg, dir, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var service struct {
+		ProgramArguments     []string
+		WorkingDirectory     string
+		EnvironmentVariables map[string]string
+	}
+	if _, err := plist.Unmarshal(data, &service); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, service.ProgramArguments[0], service.ProgramArguments[1:]...)
+	cmd.Dir = service.WorkingDirectory
+	for k, v := range service.EnvironmentVariables {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	configureInstallCommand(cmd)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := ipv4.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		_ = cmd.Wait()
+		if t.Failed() {
+			t.Log(output.String())
+		}
+	}()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		err := Available(ctx, cfg.Bonsai)
+		if err == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("managed server failed to become ready with IPv6 occupied: %v", err)
+		case <-ticker.C:
+		}
 	}
 }
 
