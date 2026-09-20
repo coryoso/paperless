@@ -1304,7 +1304,7 @@ function JobDetail({
         </div>
       )}
       <ReprocessButton
-        key={job.id}
+        key={`reprocess-${job.id}`}
         job={job}
         onReprocess={onReprocess}
         disabled={saving}
@@ -1350,7 +1350,7 @@ function JobDetail({
         </p>
       )}
       {review && job.status === "needs_review" && (
-        <SimilarDocuments key={job.id} jobID={job.id} />
+        <SimilarDocuments key={`similar-${job.id}`} jobID={job.id} />
       )}
       {review && job.status === "needs_review" && (
         <section className="routing-form">
