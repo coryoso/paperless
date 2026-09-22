@@ -262,7 +262,7 @@ function App() {
 
   return (
     <div
-      className={`app-shell${dashboard.settings.setup_required ? " onboarding-shell" : view === "overview" ? "" : " workspace-shell"}`}
+      className={`app-shell${dashboard.settings.setup_required ? " onboarding-shell" : view === "overview" ? " overview-shell" : " workspace-shell"}`}
     >
       <header className="masthead">
         <div className="masthead-inner">
@@ -310,7 +310,7 @@ function App() {
               <NavButton
                 active={view === "settings"}
                 icon={<Settings2 />}
-                label="Setup"
+                label={dashboard.settings.setup_required ? "Setup" : "Settings"}
                 onClick={() => setView("settings")}
               />
             </nav>
@@ -330,11 +330,7 @@ function App() {
                   <span>{dashboard.settings.inbox || "Loading inbox..."}</span>
                 </div>
               </div>
-              <UploadPanel
-                activeCount={activeUploadCount}
-                onFiles={enqueueFiles}
-                onOpenQueue={() => setView("processing")}
-              />
+              <UploadPanel onFiles={enqueueFiles} />
             </div>
           )}
         </div>
@@ -421,6 +417,14 @@ function App() {
             <Settings dashboard={dashboard} onRefresh={load} />
           )}
       </main>
+      {!loading &&
+        !dashboard.settings.setup_required &&
+        view === "overview" && (
+          <ArchiveStrip
+            dashboard={dashboard}
+            onOpenSettings={() => setView("settings")}
+          />
+        )}
     </div>
   );
 }
@@ -453,18 +457,9 @@ function NavButton({
   );
 }
 
-function UploadPanel({
-  activeCount,
-  onFiles,
-  onOpenQueue,
-}: {
-  activeCount: number;
-  onFiles: (files: File[]) => void;
-  onOpenQueue: () => void;
-}) {
+function UploadPanel({ onFiles }: { onFiles: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [failed, setFailed] = useState("");
-  const [message, setMessage] = useState("Select one or several documents.");
   const [dragDepth, setDragDepth] = useState(0);
   const dragging = dragDepth > 0;
 
@@ -475,9 +470,6 @@ function UploadPanel({
       return;
     }
     setFailed("");
-    setMessage(
-      `${supported.length} document${supported.length === 1 ? "" : "s"} added to the processing queue.`,
-    );
     onFiles(supported);
   };
 
@@ -506,31 +498,7 @@ function UploadPanel({
   };
 
   return (
-    <section className="upload-panel" aria-label="Upload document">
-      <div className="upload-top">
-        <div className="round-icon">
-          <Upload />
-        </div>
-        <div>
-          <strong>Add documents</strong>
-          <span>PDF, PNG or JPEG</span>
-        </div>
-        <span
-          className={
-            failed
-              ? "state-badge bad"
-              : activeCount
-                ? "state-badge busy"
-                : "state-badge"
-          }
-        >
-          {failed
-            ? "Check files"
-            : activeCount
-              ? `${activeCount} processing`
-              : "Ready"}
-        </span>
-      </div>
+    <section aria-label="Upload documents">
       <input
         ref={inputRef}
         hidden
@@ -557,27 +525,16 @@ function UploadPanel({
         </span>
         <span className="drop-zone-copy">
           <strong>
-            {dragging ? "Drop to add documents" : "Drop documents here"}
+            {dragging ? "Drop to process" : "Drop documents here"}
           </strong>
-          <span>They start processing immediately</span>
+          <span>PDF, PNG or JPEG (processing starts immediately)</span>
         </span>
-        <span className="drop-zone-action">
-          <FileSearch /> Choose files
-        </span>
+        {failed && (
+          <span className="upload-state error-text" role="alert">
+            {failed}
+          </span>
+        )}
       </button>
-      <div className="upload-actions">
-        <span className={failed ? "upload-state error-text" : "upload-state"}>
-          {failed || message}
-        </span>
-        <button
-          type="button"
-          className="primary-button"
-          disabled={!activeCount}
-          onClick={onOpenQueue}
-        >
-          <LoaderCircle className={activeCount ? "spin" : ""} /> View queue
-        </button>
-      </div>
     </section>
   );
 }
@@ -885,6 +842,11 @@ function Overview({
   onOpenJob: (job: Job) => void;
   onOpenReview: () => void;
 }) {
+  const recentlyArchived = dashboard.all_jobs
+    .filter((job) => job.status === "archived")
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .slice(0, 5);
+
   return (
     <>
       <section className="stats-grid">
@@ -925,18 +887,17 @@ function Overview({
         </div>
         <div>
           <SectionHead
-            title="Recent scans"
-            meta={`${dashboard.recent_jobs.length} latest`}
+            title="Recently archived"
+            meta={`${recentlyArchived.length} latest`}
           />
           <JobList
-            jobs={dashboard.recent_jobs.slice(0, 5)}
-            empty="No documents scanned yet."
+            jobs={recentlyArchived}
+            empty="Reviewed documents will appear here once archived."
             onSelect={onOpenJob}
             compact
           />
         </div>
       </section>
-      <ArchiveStrip dashboard={dashboard} />
     </>
   );
 }
@@ -968,32 +929,44 @@ function Stat({
   );
 }
 
-function ArchiveStrip({ dashboard }: { dashboard: Dashboard }) {
+function ArchiveStrip({
+  dashboard,
+  onOpenSettings,
+}: {
+  dashboard: Dashboard;
+  onOpenSettings: () => void;
+}) {
   return (
-    <section className="archive-strip">
-      <div className="round-icon dark">
-        <Archive />
+    <footer className="archive-footer">
+      <div className="archive-strip">
+        <div className="round-icon dark">
+          <Archive />
+        </div>
+        <div>
+          <span>Archive location</span>
+          <strong title={dashboard.settings.archive_root}>
+            {dashboard.settings.archive_root}
+          </strong>
+        </div>
+        <div
+          className={
+            dashboard.settings.archive_exists
+              ? "archive-state ok"
+              : "archive-state bad"
+          }
+        >
+          {dashboard.settings.archive_exists ? <Check /> : <CircleAlert />}
+          {dashboard.settings.archive_exists ? "Connected" : "Unavailable"}
+        </div>
+        <button
+          type="button"
+          className="archive-settings"
+          onClick={onOpenSettings}
+        >
+          <Settings2 /> Settings
+        </button>
       </div>
-      <div>
-        <span>Archive root</span>
-        <strong>{dashboard.settings.archive_root}</strong>
-      </div>
-      <div
-        className={
-          dashboard.settings.archive_exists
-            ? "archive-state ok"
-            : "archive-state bad"
-        }
-      >
-        {dashboard.settings.archive_exists ? <Check /> : <CircleAlert />}
-        {dashboard.settings.archive_exists ? "Connected" : "Unavailable"}
-      </div>
-      <div className="folder-sample">
-        {dashboard.folders.slice(0, 5).map((folder) => (
-          <span key={folder}>{folder}</span>
-        ))}
-      </div>
-    </section>
+    </footer>
   );
 }
 
