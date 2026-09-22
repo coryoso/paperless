@@ -64,7 +64,6 @@ export function EmbeddingSettings({
   };
   return (
     <section className="setup-wizard embedding-settings">
-      <div className="setup-step-number">4</div>
       <div className="setup-step-copy">
         <h3>Compare similar documents</h3>
         <p>
