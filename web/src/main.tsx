@@ -578,7 +578,7 @@ function ProcessingWorkspace({
   ).length;
 
   return (
-    <section className="workspace-grid processing-workspace">
+    <section className="workspace-grid">
       <aside className="queue-column">
         <SectionHead title="Processing queue" meta={`${active} active`} />
         {entries.length ? (
@@ -607,7 +607,7 @@ function ProcessingWorkspace({
                       {entry.task?.filename || entry.job?.source_filename}
                     </strong>
                     <span>{processingEntryLabel(entry.task, entry.job)}</span>
-                    <div className="queue-row-progress">
+                    <div className="queue-row-progress" aria-hidden="true">
                       <span style={{ width: `${percent}%` }} />
                     </div>
                   </div>
@@ -1174,6 +1174,7 @@ function JobDetail({
   onReprocess: (job: Job) => Promise<void>;
 }) {
   const classification = job.classification;
+  const needsReview = review && job.status === "needs_review";
   const [folder, setFolder] = useState(classification.suggested_folder || "");
   const [recipient, setRecipient] = useState(classification.recipient || "");
   const [recipientScope, setRecipientScope] = useState(
@@ -1259,7 +1260,9 @@ function JobDetail({
   };
 
   return (
-    <article className="document-detail">
+    <article
+      className={`document-detail${needsReview ? " review-detail" : ""}`}
+    >
       <header className="detail-head">
         <div>
           <span className="eyebrow">
@@ -1280,12 +1283,14 @@ function JobDetail({
           <CircleAlert /> {job.error}
         </div>
       )}
-      <ReprocessButton
-        key={`reprocess-${job.id}`}
-        job={job}
-        onReprocess={onReprocess}
-        disabled={saving}
-      />
+      {!needsReview && (
+        <ReprocessButton
+          key={`reprocess-${job.id}`}
+          job={job}
+          onReprocess={onReprocess}
+          disabled={saving}
+        />
+      )}
       <div className="fact-row">
         <Fact
           label="Sender"
@@ -1300,8 +1305,12 @@ function JobDetail({
           value={displayName(classification.recipient) || "Not detected"}
         />
         <Fact
-          label="Type"
-          value={displayName(classification.document_type) || "Unknown"}
+          label={needsReview ? "Date" : "Type"}
+          value={
+            needsReview
+              ? classification.document_date || "Not detected"
+              : displayName(classification.document_type) || "Unknown"
+          }
         />
         <Fact label="Pages" value={String(job.page_count || 0)} />
       </div>
@@ -1320,155 +1329,170 @@ function JobDetail({
           </div>
         </section>
       )}
-      {classification.recipient_address && (
+      {!needsReview && classification.recipient_address && (
         <p className="learning-note">
           Detected recipient address:{" "}
           {classification.recipient_address.replace(/\n/g, ", ")}
         </p>
       )}
-      {review && job.status === "needs_review" && (
-        <SimilarDocuments key={`similar-${job.id}`} jobID={job.id} />
-      )}
-      {review && job.status === "needs_review" && (
-        <section className="routing-form">
-          <div className="route-head">
-            <div>
-              <span className="eyebrow">Destination</span>
-              <h3>
-                {folder
-                  ? "Choose the final folder"
-                  : "No archive folder matched"}
-              </h3>
-            </div>
-            <FolderArchive />
-          </div>
-          <div className="recipient-review">
-            <label className="filename-field">
-              <span>Recipient</span>
-              <select
-                value={recipientChoice}
-                onChange={(event) => {
-                  const choice = event.target.value;
-                  setRecipientChoice(choice);
-                  const profile = profiles.find((p) => String(p.id) === choice);
-                  if (
-                    profile?.folder_prefix &&
-                    folder !== profile.folder_prefix &&
-                    !folder.startsWith(`${profile.folder_prefix}/`)
-                  )
-                    setFolder(profile.folder_prefix);
-                }}
-              >
-                <option value="" disabled>
-                  Choose a recipient…
-                </option>
-                {profiles.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name} ·{" "}
-                    {
-                      recipientScopes.find(
-                        (scope) => scope.value === profile.scope,
-                      )?.label
-                    }
-                  </option>
-                ))}
-                <option value="new">＋ New recipient…</option>
-              </select>
-            </label>
-            {recipientChoice === "new" && (
-              <>
-                <label>
-                  <span>Recipient name</span>
-                  <input
-                    maxLength={200}
-                    value={recipient}
-                    onChange={(event) => setRecipient(event.target.value)}
-                    placeholder="Name on the document"
-                  />
-                </label>
-                <label>
-                  <span>Addressed to</span>
+      <div className={needsReview ? "review-body" : undefined}>
+        {needsReview && (
+          <div className="review-controls">
+            <section className="routing-form">
+              <div className="route-head">
+                <div>
+                  <span className="eyebrow">Destination</span>
+                  <h3>
+                    {folder
+                      ? "Choose the final folder"
+                      : "No archive folder matched"}
+                  </h3>
+                </div>
+                <FolderArchive />
+              </div>
+              <div className="recipient-review">
+                <label className="filename-field">
+                  <span>Recipient</span>
                   <select
-                    value={recipientScope}
-                    onChange={(event) => setRecipientScope(event.target.value)}
+                    value={recipientChoice}
+                    onChange={(event) => {
+                      const choice = event.target.value;
+                      setRecipientChoice(choice);
+                      const profile = profiles.find(
+                        (p) => String(p.id) === choice,
+                      );
+                      if (
+                        profile?.folder_prefix &&
+                        folder !== profile.folder_prefix &&
+                        !folder.startsWith(`${profile.folder_prefix}/`)
+                      )
+                        setFolder(profile.folder_prefix);
+                    }}
                   >
-                    {recipientScopes.map(({ value, label }) => (
-                      <option key={value} value={value}>
-                        {label}
+                    <option value="" disabled>
+                      Choose a recipient…
+                    </option>
+                    {profiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.name} ·{" "}
+                        {
+                          recipientScopes.find(
+                            (scope) => scope.value === profile.scope,
+                          )?.label
+                        }
                       </option>
                     ))}
+                    <option value="new">＋ New recipient…</option>
                   </select>
                 </label>
-                <p>
-                  This recipient will be saved in Settings when you approve.
-                </p>
-              </>
-            )}
-            <p>
-              {classification.recipient_evidence
-                ? `Detected from: “${classification.recipient_evidence}”`
-                : "Check who the document is addressed to, including their personal or business capacity."}
-            </p>
-            {alias && selectedRecipient && (
-              <p className="alias-learning">
-                On approval, “{alias}” will be saved as an alias of{" "}
-                {selectedRecipient.name}.
-              </p>
-            )}
-          </div>
-          <FolderPicker
-            key={job.id}
-            folders={folders}
-            value={folder}
-            onChange={setFolder}
-          />
-          <label>
-            <span>Document type</span>
-            <select
-              value={documentType}
-              onChange={(event) => {
-                const next = event.target.value;
-                setFilename((current) =>
-                  replaceFilenameDocumentType(current, documentType, next),
-                );
-                setDocumentType(next);
-              }}
-            >
-              {documentTypes.map((value) => (
-                <option key={value} value={value}>
-                  {displayName(value)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className={`paper-recommendation ${paper}`} role="status">
-            <FileCheck2 />
-            <div>
-              <span>Paper original · Recommendation</span>
-              <strong>
-                {paper === "keep_original"
-                  ? "Keep the original"
-                  : paper === "discard_candidate"
-                    ? "May be discarded after checking the scan"
-                    : "Check whether the original is needed"}
-              </strong>
-              <p>Based on the document type and your retention policy.</p>
-            </div>
-          </div>
-          <label className="filename-field">
-            <span>Filename</span>
-            <input
-              value={filename}
-              onChange={(event) => setFilename(event.target.value)}
-            />
-          </label>
-          <div className="resolved-path">
-            <Archive />{" "}
-            <span>
-              {archiveRoot}
-              {folder ? `/${folder}` : ""}/{filename}
-            </span>
-          </div>
+                {recipientChoice === "new" && (
+                  <>
+                    <label>
+                      <span>Recipient name</span>
+                      <input
+                        maxLength={200}
+                        value={recipient}
+                        onChange={(event) => setRecipient(event.target.value)}
+                        placeholder="Name on the document"
+                      />
+                    </label>
+                    <label>
+                      <span>Addressed to</span>
+                      <select
+                        value={recipientScope}
+                        onChange={(event) =>
+                          setRecipientScope(event.target.value)
+                        }
+                      >
+                        {recipientScopes.map(({ value, label }) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <p>
+                      This recipient will be saved in Settings when you approve.
+                    </p>
+                  </>
+                )}
+                <details
+                  className="recipient-evidence"
+                  key={`evidence-${job.id}`}
+                >
+                  <summary>Detected recipient details</summary>
+                  <p>
+                    {classification.recipient_evidence
+                      ? `Detected from: “${classification.recipient_evidence}”`
+                      : "Check who the document is addressed to, including their personal or business capacity."}
+                  </p>
+                  {classification.recipient_address && (
+                    <p>
+                      Address:{" "}
+                      {classification.recipient_address.replace(/\n/g, ", ")}
+                    </p>
+                  )}
+                </details>
+                {alias && selectedRecipient && (
+                  <p className="alias-learning">
+                    On approval, “{alias}” will be saved as an alias of{" "}
+                    {selectedRecipient.name}.
+                  </p>
+                )}
+              </div>
+              <FolderPicker
+                key={job.id}
+                folders={folders}
+                value={folder}
+                onChange={setFolder}
+              />
+              <label>
+                <span>Document type</span>
+                <select
+                  value={documentType}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setFilename((current) =>
+                      replaceFilenameDocumentType(current, documentType, next),
+                    );
+                    setDocumentType(next);
+                  }}
+                >
+                  {documentTypes.map((value) => (
+                    <option key={value} value={value}>
+                      {displayName(value)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="review-filename">
+                <span>Filename</span>
+                <input
+                  value={filename}
+                  onChange={(event) => setFilename(event.target.value)}
+                />
+              </label>
+              <div className={`paper-recommendation ${paper}`} role="status">
+                <FileCheck2 />
+                <div>
+                  <span>Paper original · Recommendation</span>
+                  <strong>
+                    {paper === "keep_original"
+                      ? "Keep the original"
+                      : paper === "discard_candidate"
+                        ? "May be discarded after checking the scan"
+                        : "Check whether the original is needed"}
+                  </strong>
+                  <p>Based on the document type and your retention policy.</p>
+                </div>
+              </div>
+              <div className="resolved-path">
+                <Archive />{" "}
+                <span>
+                  {archiveRoot}
+                  {folder ? `/${folder}` : ""}/{filename}
+                </span>
+              </div>
           {job.final_path && (
             <div className="archive-choice">
               <span className="eyebrow">Previously saved file</span>
@@ -1496,45 +1520,66 @@ function JobDetail({
               </p>
             </div>
           )}
-          {error && <div className="form-error">{error}</div>}
-          <p className="learning-note">
-            Approval saves your recipient and folder choices locally to guide
-            similar documents.
-          </p>
-          <div className="review-actions">
-            <button
-              type="button"
-              className="primary-button"
-              disabled={
-                !folder.trim() ||
-                !filename.trim() ||
-                !documentType ||
-                !recipientChoice ||
-                (recipientChoice === "new" && !recipient.trim()) ||
-                (recipientChoice !== "new" && !selectedRecipient) ||
-                saving
-              }
-              onClick={approve}
-            >
-              {saving ? <LoaderCircle className="spin" /> : <Check />}
-              {job.final_path
-                ? archiveMode === "replace"
-                  ? "Approve & replace"
-                  : "Approve & keep both"
-                : "Approve & archive"}
-            </button>
-            <button
-              type="button"
-              className="danger-button"
-              disabled={saving}
-              onClick={reject}
-            >
-              <Trash2 /> Reject & delete
-            </button>
+              <p className="learning-note">
+                Approval saves your recipient and folder choices locally to
+                guide similar documents.
+              </p>
+            </section>
+            <details className="review-support" key={`comparisons-${job.id}`}>
+              <summary>Similar previously approved documents</summary>
+              <SimilarDocuments key={`similar-${job.id}`} jobID={job.id} />
+            </details>
+            <details className="review-support" key={`tools-${job.id}`}>
+              <summary>Processing tools</summary>
+              <ReprocessButton
+                key={`reprocess-${job.id}`}
+                job={job}
+                onReprocess={onReprocess}
+                disabled={saving}
+              />
+            </details>
+            <div className="review-footer">
+              {error && (
+                <div className="form-error" role="alert">
+                  {error}
+                </div>
+              )}
+              <div className="review-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={
+                    !folder.trim() ||
+                    !filename.trim() ||
+                    !documentType ||
+                    !recipientChoice ||
+                    (recipientChoice === "new" && !recipient.trim()) ||
+                    (recipientChoice !== "new" && !selectedRecipient) ||
+                    saving
+                  }
+                  onClick={approve}
+                >
+                  {saving ? <LoaderCircle className="spin" /> : <Check />}
+                  {job.final_path
+                    ? archiveMode === "replace"
+                      ? "Approve & replace"
+                      : "Approve & keep both"
+                    : "Approve & archive"}
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={saving}
+                  onClick={reject}
+                >
+                  <Trash2 /> Reject & delete
+                </button>
+              </div>
+            </div>
           </div>
-        </section>
-      )}
-      <DocumentPreview job={job} />
+        )}
+        <DocumentPreview job={job} />
+      </div>
     </article>
   );
 }
