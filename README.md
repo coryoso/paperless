@@ -64,7 +64,11 @@ The review screen lets you:
 - adjust the document type and filename;
 - approve filing or reject and permanently delete the document.
 
-Email and portal PDFs keep their existing text layer when it is complete. Scanned and mixed-content PDFs use the OCR pipeline. Receipts are detected from their scan geometry and point-of-sale text and receive receipt-oriented filing suggestions.
+Email and portal PDFs keep their existing text layer when it is complete. Scanned and mixed-content PDFs use the OCR pipeline.
+
+For multipage scans, pages are individually straightened and cropped, then fitted to a shared page format before OCR. The majority page size determines that format; if crops vary too much, the original scan sizes provide the fallback. When neither has a majority, a shared canvas accommodates every cleaned page. Smaller crops receive white margins, larger pages are scaled proportionally to fit, and portrait/landscape orientation is preserved. Single-page scans keep their individual crop size.
+
+Receipts are detected from their scan geometry and point-of-sale text and receive receipt-oriented filing suggestions.
 
 Filing is intentionally conservative. Approved decisions become local routing examples, but conflicting destinations, unknown recipients, and ambiguous business capacities continue to require review. Moving a file directly in Finder does not teach Paperless.
 

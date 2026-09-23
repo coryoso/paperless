@@ -55,6 +55,7 @@ type PageResult struct {
 }
 
 type imageAnalysis struct {
+	SourceBounds       image.Rectangle
 	Bounds             image.Rectangle
 	Content            image.Rectangle
 	OutputBounds       image.Rectangle
@@ -125,20 +126,46 @@ func ProcessWithProgress(ctx context.Context, cfg config.Config, inputPath strin
 		return Result{}, err
 	}
 
-	var pages []PageResult
-	var pagePDFs []string
-	var textParts []string
+	// Clean every page before OCR so the document can share one page format.
+	// Keep images on disk rather than holding an entire scan in memory.
+	analyses := make([]imageAnalysis, len(rendered))
+	cleanedPaths := make([]string, len(rendered))
+	totalWorkUnits := len(rendered) * 5
 	for index, imagePath := range rendered {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		page := index + 1
-		totalWorkUnits := len(rendered) * 4
-		pageBaseUnit := index * 4
-		cleanedPath := filepath.Join(cleanedDir, fmt.Sprintf("page-%04d.png", index+1))
-		reporter.Info("ocr", "clean", fmt.Sprintf("Cleaning page %d of %d.", page, len(rendered)), page, len(rendered), progress.PercentRange(30, 76, pageBaseUnit, totalWorkUnits))
+		cleanedPath := filepath.Join(cleanedDir, fmt.Sprintf("page-%04d.png", page))
+		reporter.Info("ocr", "clean", fmt.Sprintf("Cleaning page %d of %d.", page, len(rendered)), page, len(rendered), progress.PercentRange(30, 76, index, totalWorkUnits))
 		analysis, err := cleanImage(ctx, cfg, imagePath, cleanedPath)
 		if err != nil {
 			return Result{}, err
 		}
-		reporter.Info("ocr", "clean", pageCleanupMessage(page, len(rendered), analysis), page, len(rendered), progress.PercentRange(30, 76, pageBaseUnit+1, totalWorkUnits))
+		analyses[index] = analysis
+		cleanedPaths[index] = cleanedPath
+		reporter.Info("ocr", "clean", pageCleanupMessage(page, len(rendered), analysis), page, len(rendered), progress.PercentRange(30, 76, page, totalWorkUnits))
+	}
+	format := documentPageFormat(analyses)
+	var pages []PageResult
+	var pagePDFs []string
+	var textParts []string
+	for index, imagePath := range rendered {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		page := index + 1
+		pageBaseUnit := len(rendered) + index*4
+		cleanedPath := cleanedPaths[index]
+		analysis := analyses[index]
+		if format != (image.Point{}) {
+			reporter.Info("ocr", "format", fmt.Sprintf("Matching page %d of %d to the document page format.", page, len(rendered)), page, len(rendered), progress.PercentRange(30, 76, pageBaseUnit, totalWorkUnits))
+			bounds, err := normalizePageImage(cleanedPath, format, analysis.SourceBounds)
+			if err != nil {
+				return Result{}, err
+			}
+			analysis.OutputBounds = bounds
+		}
 		base := filepath.Join(ocrDir, fmt.Sprintf("page-%04d", index+1))
 		if err := runTesseract(ctx, languages, cleanedPath, base, cfg.OCR.RenderDPI, reporter, page, len(rendered), pageBaseUnit+1, totalWorkUnits); err != nil {
 			return Result{}, err
@@ -504,17 +531,16 @@ func cleanImage(ctx context.Context, cfg config.Config, inputPath string, output
 		analysis.CropConfidence = initial.CropConfidence
 		analysis.Layout = initial.Layout
 	}
+	analysis.SourceBounds = img.Bounds()
 	analysis.OrientationDegrees = orientationDegrees
 	analysis.DeskewAngle = deskewAngle
 	outImg := working
 	if cfg.OCR.CropContent && analysis.ShouldCrop {
 		outImg = cropImage(working, analysis.Content)
 		cropped = true
-	} else if cropped {
-		// A first crop can make the second analysis look full-page. Keep the crop
-		// decision visible in metadata and progress output.
-		analysis.ShouldCrop = true
 	}
+	// Record actual cropping, including the initial crop and crop_content=false.
+	analysis.ShouldCrop = cropped
 	analysis.OutputBounds = outImg.Bounds()
 	out, err := os.Create(outputPath)
 	if err != nil {
