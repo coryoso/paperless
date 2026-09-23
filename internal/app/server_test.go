@@ -275,7 +275,7 @@ func TestApprovePersistsCorrectedDocumentType(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	finalPath, err := processor.ApproveJob(t.Context(), jobID, "Belege", "2025-06-07__total-tankstelle__receipt.pdf", "receipt", "discard_candidate")
+	finalPath, err := processor.ApproveJob(t.Context(), jobID, "Belege", "2025-06-07__total-tankstelle__receipt.pdf", "receipt", "discard_candidate", "")
 	if err != nil {
 		t.Fatal(err)
 	}

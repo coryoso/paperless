@@ -513,6 +513,7 @@ func (p *Processor) handleApproveAPI(w http.ResponseWriter, r *http.Request) {
 		Filename               string  `json:"filename"`
 		DocumentType           string  `json:"document_type"`
 		PhysicalOriginalAction string  `json:"physical_original_action"`
+		ArchiveMode            string  `json:"archive_mode"`
 		RecipientProfileID     *int64  `json:"recipient_profile_id"`
 		Recipient              *string `json:"recipient"`
 		RecipientScope         *string `json:"recipient_scope"`
@@ -535,7 +536,7 @@ func (p *Processor) handleApproveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		corrections = append(corrections, RecipientCorrection{Recipient: *input.Recipient, Scope: *input.RecipientScope})
 	}
-	finalPath, err := p.ApproveJob(r.Context(), r.PathValue("jobID"), input.Folder, input.Filename, input.DocumentType, input.PhysicalOriginalAction, corrections...)
+	finalPath, err := p.ApproveJob(r.Context(), r.PathValue("jobID"), input.Folder, input.Filename, input.DocumentType, input.PhysicalOriginalAction, input.ArchiveMode, corrections...)
 	if err != nil {
 		writeAPIError(w, err, http.StatusBadRequest)
 		return

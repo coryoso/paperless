@@ -71,7 +71,7 @@ func TestReviewApprovalTeachesRecipientScopedRoutingAfterRestart(t *testing.T) {
 	if c.SuggestedFolder != "Misc/Alpha" {
 		t.Fatalf("learned destination omitted after restart: %+v", c)
 	}
-	if _, err := p.ApproveJob(t.Context(), id, "Misc/Alpha", "invoice.pdf", "routine-invoice", "keep_original"); err == nil {
+	if _, err := p.ApproveJob(t.Context(), id, "Misc/Alpha", "invoice.pdf", "routine-invoice", "keep_original", ""); err == nil {
 		t.Fatal("a second approval must not count as another learning example")
 	}
 }

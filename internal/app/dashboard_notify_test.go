@@ -70,7 +70,7 @@ func TestDashboardPipelineProcess(t *testing.T) {
 	if err := process("pipeline-one", "original"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.ApproveJob(t.Context(), "pipeline-one", "Letters", "receipt.pdf", "receipt", ""); err != nil {
+	if _, err := p.ApproveJob(t.Context(), "pipeline-one", "Letters", "receipt.pdf", "receipt", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := process("pipeline-duplicate", "original"); err != nil {

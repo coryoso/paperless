@@ -480,9 +480,12 @@ type RecipientCorrection struct {
 	Scope     string `json:"recipient_scope"`
 }
 
-func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, documentType, physicalAction string, recipient ...RecipientCorrection) (string, error) {
+func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, documentType, physicalAction, archiveMode string, recipient ...RecipientCorrection) (string, error) {
 	p.processingMu.Lock()
 	defer p.processingMu.Unlock()
+	if archiveMode != "" && archiveMode != "replace" && archiveMode != "keep_both" {
+		return "", errors.New("choose replace or keep_both for the previous archived file")
+	}
 	folder = strings.TrimSpace(folder)
 	if filepath.IsAbs(folder) {
 		return "", errors.New("folder must be relative to the archive root")
@@ -561,10 +564,20 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 	if c.RecipientScope != "unknown" && !classify.FolderFitsRecipient(folder, c, profiles) {
 		return "", errors.New("this folder belongs to a different recipient or capacity; check the recipient or choose another folder")
 	}
-	finalPath, err := p.finalPath(folder, filename)
+	destination, err := p.archiveDestination(folder, filename)
 	if err != nil {
 		return "", err
 	}
+	archive, err := p.prepareReviewArchive(ctx, job, destination, archiveMode == "replace")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err := archive.rollback(); err != nil {
+			slog.Error("could not restore archive after failed approval", "job", jobID, "error", err)
+		}
+	}()
+	finalPath := archive.path
 	c.DocumentType = documentType
 	c.SuggestedFolder = strings.Trim(folder, "/")
 	c.SuggestedFilename = filepath.Base(finalPath)
@@ -589,9 +602,6 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 	// The correction is already saved. Notify even if a later archive/learning
 	// step fails, so other dashboards display the state that actually persisted.
 	defer p.notifyDashboard()
-	if err := moveFile(job.CurrentPath, finalPath); err != nil {
-		return "", err
-	}
 	if err := p.store.Queries.SetManualArchived(ctx, sqlc.SetManualArchivedParams{
 		CurrentPath:            finalPath,
 		FinalPath:              finalPath,
@@ -602,6 +612,10 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 		ID:                     jobID,
 	}); err != nil {
 		return "", err
+	}
+	archive.committed = true
+	if err := archive.cleanup(job.CurrentPath); err != nil {
+		return "", fmt.Errorf("document archived, but could not remove the previous copy: %w", err)
 	}
 	if err := p.store.LearnApproval(ctx, db.Approval{
 		RecipientProfileID: profileID,
@@ -902,6 +916,14 @@ func (p *Processor) syncFolderInventory(ctx context.Context) error {
 }
 
 func (p *Processor) finalPath(folder, filename string) (string, error) {
+	path, err := p.archiveDestination(folder, filename)
+	if err != nil {
+		return "", err
+	}
+	return uniquePath(path), nil
+}
+
+func (p *Processor) archiveDestination(folder, filename string) (string, error) {
 	root := p.cfg.Paths.ArchiveRoot
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
@@ -925,7 +947,7 @@ func (p *Processor) finalPath(folder, filename string) (string, error) {
 	if filename == "" {
 		filename = "scan.pdf"
 	}
-	return uniquePath(filepath.Join(destination, safePDFName(filename))), nil
+	return filepath.Join(destination, safePDFName(filename)), nil
 }
 
 func stableFile(ctx context.Context, path string, wait time.Duration) (bool, error) {

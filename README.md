@@ -70,6 +70,8 @@ For multipage scans, pages are individually straightened and cropped, then fitte
 
 Receipts are detected from their scan geometry and point-of-sale text and receive receipt-oriented filing suggestions.
 
+**Reprocess document** runs OCR and classification again while keeping the previously archived file. When approving the new review, **Replace previous file** saves the reviewed PDF under the chosen name and folder and removes the previous archive copy. Choose **Keep both files** to retain it and save another copy; the document record then points to the new copy. The review shows the previous path and defaults to replacement. Unrelated filename collisions receive a numbered suffix.
+
 Filing is intentionally conservative. Approved decisions become local routing examples, but conflicting destinations, unknown recipients, and ambiguous business capacities continue to require review. Moving a file directly in Finder does not teach Paperless.
 
 Mahnungen and Zahlungserinnerungen use the **Payment reminder** document type. Recipient detection considers both the addressee and the document's business context: multiple names can represent a private household or business partners, including a GbR without an explicit legal suffix. Joint business obligations use business filing areas; personal correspondence stays separate. Inferred partnerships and shared personal/business names require confirmation when the identity remains ambiguous.
