@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/BurntSushi/toml v1.5.0
+	golang.org/x/image v0.43.0
 	golang.org/x/sys v0.47.0
 	howett.net/plist v1.0.1
 	modernc.org/sqlite v1.59.0
