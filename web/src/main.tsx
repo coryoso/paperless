@@ -8,10 +8,8 @@ import {
   FileSearch,
   Files,
   FolderArchive,
-  FolderOpen,
   Inbox,
   LoaderCircle,
-  RefreshCw,
   RotateCcw,
   ScanLine,
   Settings2,
@@ -34,8 +32,7 @@ import { FolderPicker } from "./FolderPicker";
 import { TextPreview } from "./TextPreview";
 import { SetupGuide } from "./SetupGuide";
 import { SimilarDocuments } from "./SimilarDocuments";
-import { EmbeddingSettings } from "./EmbeddingSettings";
-import { RecipientSettings } from "./RecipientSettings";
+import { Settings } from "./Settings";
 import type {
   Dashboard,
   Job,
@@ -265,7 +262,7 @@ function App() {
 
   return (
     <div
-      className={`app-shell${dashboard.settings.setup_required ? " onboarding-shell" : view === "overview" ? "" : " workspace-shell"}`}
+      className={`app-shell${dashboard.settings.setup_required ? " onboarding-shell" : view === "overview" ? " overview-shell" : " workspace-shell"}`}
     >
       <header className="masthead">
         <div className="masthead-inner">
@@ -313,7 +310,7 @@ function App() {
               <NavButton
                 active={view === "settings"}
                 icon={<Settings2 />}
-                label="Setup"
+                label={dashboard.settings.setup_required ? "Setup" : "Settings"}
                 onClick={() => setView("settings")}
               />
             </nav>
@@ -333,11 +330,7 @@ function App() {
                   <span>{dashboard.settings.inbox || "Loading inbox..."}</span>
                 </div>
               </div>
-              <UploadPanel
-                activeCount={activeUploadCount}
-                onFiles={enqueueFiles}
-                onOpenQueue={() => setView("processing")}
-              />
+              <UploadPanel onFiles={enqueueFiles} />
             </div>
           )}
         </div>
@@ -421,9 +414,17 @@ function App() {
         {!loading &&
           !dashboard.settings.setup_required &&
           view === "settings" && (
-            <Setup dashboard={dashboard} onRefresh={load} />
+            <Settings dashboard={dashboard} onRefresh={load} />
           )}
       </main>
+      {!loading &&
+        !dashboard.settings.setup_required &&
+        view === "overview" && (
+          <ArchiveStrip
+            dashboard={dashboard}
+            onOpenSettings={() => setView("settings")}
+          />
+        )}
     </div>
   );
 }
@@ -456,18 +457,9 @@ function NavButton({
   );
 }
 
-function UploadPanel({
-  activeCount,
-  onFiles,
-  onOpenQueue,
-}: {
-  activeCount: number;
-  onFiles: (files: File[]) => void;
-  onOpenQueue: () => void;
-}) {
+function UploadPanel({ onFiles }: { onFiles: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [failed, setFailed] = useState("");
-  const [message, setMessage] = useState("Select one or several documents.");
   const [dragDepth, setDragDepth] = useState(0);
   const dragging = dragDepth > 0;
 
@@ -478,9 +470,6 @@ function UploadPanel({
       return;
     }
     setFailed("");
-    setMessage(
-      `${supported.length} document${supported.length === 1 ? "" : "s"} added to the processing queue.`,
-    );
     onFiles(supported);
   };
 
@@ -509,31 +498,7 @@ function UploadPanel({
   };
 
   return (
-    <section className="upload-panel" aria-label="Upload document">
-      <div className="upload-top">
-        <div className="round-icon">
-          <Upload />
-        </div>
-        <div>
-          <strong>Add documents</strong>
-          <span>PDF, PNG or JPEG</span>
-        </div>
-        <span
-          className={
-            failed
-              ? "state-badge bad"
-              : activeCount
-                ? "state-badge busy"
-                : "state-badge"
-          }
-        >
-          {failed
-            ? "Check files"
-            : activeCount
-              ? `${activeCount} processing`
-              : "Ready"}
-        </span>
-      </div>
+    <section aria-label="Upload documents">
       <input
         ref={inputRef}
         hidden
@@ -560,27 +525,16 @@ function UploadPanel({
         </span>
         <span className="drop-zone-copy">
           <strong>
-            {dragging ? "Drop to add documents" : "Drop documents here"}
+            {dragging ? "Drop to process" : "Drop documents here"}
           </strong>
-          <span>They start processing immediately</span>
+          <span>PDF, PNG or JPEG (processing starts immediately)</span>
         </span>
-        <span className="drop-zone-action">
-          <FileSearch /> Choose files
-        </span>
+        {failed && (
+          <span className="upload-state error-text" role="alert">
+            {failed}
+          </span>
+        )}
       </button>
-      <div className="upload-actions">
-        <span className={failed ? "upload-state error-text" : "upload-state"}>
-          {failed || message}
-        </span>
-        <button
-          type="button"
-          className="primary-button"
-          disabled={!activeCount}
-          onClick={onOpenQueue}
-        >
-          <LoaderCircle className={activeCount ? "spin" : ""} /> View queue
-        </button>
-      </div>
     </section>
   );
 }
@@ -890,6 +844,11 @@ function Overview({
   onOpenJob: (job: Job) => void;
   onOpenReview: () => void;
 }) {
+  const recentlyArchived = dashboard.all_jobs
+    .filter((job) => job.status === "archived")
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+    .slice(0, 5);
+
   return (
     <>
       <section className="stats-grid">
@@ -930,18 +889,17 @@ function Overview({
         </div>
         <div>
           <SectionHead
-            title="Recent scans"
-            meta={`${dashboard.recent_jobs.length} latest`}
+            title="Recently archived"
+            meta={`${recentlyArchived.length} latest`}
           />
           <JobList
-            jobs={dashboard.recent_jobs.slice(0, 5)}
-            empty="No documents scanned yet."
+            jobs={recentlyArchived}
+            empty="Reviewed documents will appear here once archived."
             onSelect={onOpenJob}
             compact
           />
         </div>
       </section>
-      <ArchiveStrip dashboard={dashboard} />
     </>
   );
 }
@@ -973,32 +931,44 @@ function Stat({
   );
 }
 
-function ArchiveStrip({ dashboard }: { dashboard: Dashboard }) {
+function ArchiveStrip({
+  dashboard,
+  onOpenSettings,
+}: {
+  dashboard: Dashboard;
+  onOpenSettings: () => void;
+}) {
   return (
-    <section className="archive-strip">
-      <div className="round-icon dark">
-        <Archive />
+    <footer className="archive-footer">
+      <div className="archive-strip">
+        <div className="round-icon dark">
+          <Archive />
+        </div>
+        <div>
+          <span>Archive location</span>
+          <strong title={dashboard.settings.archive_root}>
+            {dashboard.settings.archive_root}
+          </strong>
+        </div>
+        <div
+          className={
+            dashboard.settings.archive_exists
+              ? "archive-state ok"
+              : "archive-state bad"
+          }
+        >
+          {dashboard.settings.archive_exists ? <Check /> : <CircleAlert />}
+          {dashboard.settings.archive_exists ? "Connected" : "Unavailable"}
+        </div>
+        <button
+          type="button"
+          className="archive-settings"
+          onClick={onOpenSettings}
+        >
+          <Settings2 /> Settings
+        </button>
       </div>
-      <div>
-        <span>Archive root</span>
-        <strong>{dashboard.settings.archive_root}</strong>
-      </div>
-      <div
-        className={
-          dashboard.settings.archive_exists
-            ? "archive-state ok"
-            : "archive-state bad"
-        }
-      >
-        {dashboard.settings.archive_exists ? <Check /> : <CircleAlert />}
-        {dashboard.settings.archive_exists ? "Connected" : "Unavailable"}
-      </div>
-      <div className="folder-sample">
-        {dashboard.folders.slice(0, 5).map((folder) => (
-          <span key={folder}>{folder}</span>
-        ))}
-      </div>
-    </section>
+    </footer>
   );
 }
 
@@ -1707,360 +1677,6 @@ function displayInputKind(kind: Job["input_kind"]) {
   if (kind === "digital_pdf") return "Digital PDF";
   if (kind === "mixed_pdf") return "Mixed PDF";
   return "Scan";
-}
-
-function Setup({
-  dashboard,
-  onRefresh,
-}: {
-  dashboard: Dashboard;
-  onRefresh: () => Promise<void>;
-}) {
-  const [refreshing, setRefreshing] = useState(false);
-  const [choosing, setChoosing] = useState(false);
-  const [restarting, setRestarting] = useState(false);
-  const [setupError, setSetupError] = useState("");
-  const [backingUp, setBackingUp] = useState(false);
-  const [modelProvider, setModelProvider] = useState(
-    dashboard.settings.model_provider,
-  );
-  const [savingModel, setSavingModel] = useState(false);
-  const [installingModel, setInstallingModel] = useState(false);
-  const [installProgress, setInstallProgress] = useState("");
-  const saveModel = async (install = false) => {
-    setSavingModel(true);
-    setSetupError("");
-    try {
-      if (install) {
-        setInstallingModel(true);
-        setInstallProgress("Preparing Bonsai installation…");
-        await api.installBonsai(setInstallProgress);
-      }
-      await api.setModelProvider(modelProvider);
-      setRestarting(true);
-      window.setTimeout(() => window.location.reload(), 1500);
-    } catch (reason) {
-      setSetupError(errorMessage(reason));
-      setSavingModel(false);
-    } finally {
-      setInstallingModel(false);
-    }
-  };
-  const chooseDirectory = async () => {
-    setChoosing(true);
-    setSetupError("");
-    try {
-      await api.chooseDocumentsDirectory();
-      setRestarting(true);
-      window.setTimeout(() => window.location.reload(), 1500);
-    } catch (reason) {
-      setSetupError(errorMessage(reason));
-      setChoosing(false);
-    }
-  };
-  const openSharing = async () => {
-    setSetupError("");
-    try {
-      await api.openSharingSettings();
-    } catch (reason) {
-      setSetupError(errorMessage(reason));
-    }
-  };
-  const backupNow = async () => {
-    setBackingUp(true);
-    setSetupError("");
-    try {
-      await api.backupDatabase();
-      await onRefresh();
-    } catch (reason) {
-      setSetupError(errorMessage(reason));
-    } finally {
-      setBackingUp(false);
-    }
-  };
-  return (
-    <section className="setup-layout">
-      <div className="setup-title">
-        <span className="eyebrow">
-          {dashboard.settings.setup_required ? "Welcome to Paperless" : "Setup"}
-        </span>
-        <h2>Storage, scanner & model</h2>
-      </div>
-      <section
-        className={
-          dashboard.settings.setup_required
-            ? "setup-wizard required"
-            : "setup-wizard"
-        }
-      >
-        <div className="setup-step-number">1</div>
-        <div className="setup-step-copy">
-          <h3>Choose your base documents directory</h3>
-          <p>
-            Choose an existing folder on this Mac. It can be an ordinary local
-            folder or a locally available Dropbox, Google Drive, iCloud Drive,
-            OneDrive, or mounted file-server folder.
-          </p>
-          <p>
-            Paperless files completed documents below this directory. Its live
-            SQLite database remains in local Application Support so a sync
-            client cannot corrupt it. Consistent database snapshots are stored
-            in a hidden backup folder below the selected directory.
-          </p>
-          {dashboard.settings.archive_root && (
-            <code>{dashboard.settings.archive_root}</code>
-          )}
-          {dashboard.database_backup?.directory && (
-            <p>
-              {dashboard.database_backup.count
-                ? `${dashboard.database_backup.count} database backup${dashboard.database_backup.count === 1 ? "" : "s"} · latest ${dashboard.database_backup.latest}`
-                : "The first database backup will be created after startup."}{" "}
-              <button
-                type="button"
-                className="text-button"
-                disabled={backingUp}
-                onClick={backupNow}
-              >
-                {backingUp ? "Backing up…" : "Back up now"}
-              </button>
-            </p>
-          )}
-          {dashboard.settings.archive_error &&
-            !dashboard.settings.setup_required && (
-              <div className="inline-error">
-                {dashboard.settings.archive_error}
-              </div>
-            )}
-        </div>
-        <button
-          type="button"
-          className="primary-button"
-          disabled={choosing || savingModel || restarting}
-          onClick={chooseDirectory}
-        >
-          <FolderOpen />{" "}
-          {restarting
-            ? "Restarting Paperless…"
-            : choosing
-              ? "Opening folder chooser…"
-              : dashboard.settings.archive_root
-                ? "Choose another folder"
-                : "Choose documents folder"}
-        </button>
-      </section>
-      <section className="setup-wizard">
-        <div className="setup-step-number">2</div>
-        <div className="setup-step-copy">
-          <h3>Share the scanner inbox over SMB</h3>
-          <p>Your scanner writes new files to this dedicated inbox:</p>
-          <code>{dashboard.settings.inbox}</code>
-          <ol>
-            <li>Open macOS Sharing settings and turn on File Sharing.</li>
-            <li>Add the scanner inbox above as a shared folder.</li>
-            <li>
-              Under Options, enable “Share files and folders using SMB” and
-              enable the scanner’s macOS user.
-            </li>
-            <li>
-              On the scanner, enter this Mac’s hostname or IP address, the user
-              credentials, and share name{" "}
-              <strong>
-                {dashboard.settings.inbox.split("/").filter(Boolean).at(-1) ||
-                  "inbox"}
-              </strong>
-              .
-            </li>
-          </ol>
-          <p>
-            Use a dedicated macOS account limited to this inbox when your
-            scanner supports authenticated SMB.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="icon-text-button"
-          onClick={openSharing}
-        >
-          Open Sharing settings
-        </button>
-      </section>
-      <section className="setup-wizard">
-        <div className="setup-step-number">3</div>
-        <div className="setup-step-copy">
-          <h3>Choose your local model</h3>
-          <p>Choose a model to process documents locally.</p>
-          <label className="model-choice">
-            <span>Model provider</span>
-            <select
-              value={modelProvider}
-              disabled={savingModel || restarting}
-              onChange={(event) =>
-                setModelProvider(
-                  event.target.value as "ollama" | "fm" | "bonsai",
-                )
-              }
-            >
-              <option value="ollama">Ollama · Qwen 3.5</option>
-              <option value="fm">Apple Foundation Models</option>
-              <option value="bonsai">Bonsai · PrismML</option>
-            </select>
-          </label>
-          <p>
-            {modelProvider === "fm"
-              ? "Uses Apple Intelligence through the fm command. No separate model download or server is needed. Documents that exceed its context limit require review."
-              : modelProvider === "bonsai"
-                ? "Install Bonsai 8B (1-bit) and its local server, or save an existing Bonsai server. Installation downloads about 1.16 GB of model weights plus the runtime and starts the server automatically at login. Keep this page open during installation."
-                : "Uses your configured Ollama model. Ollama must be running with the model installed."}
-          </p>
-          {modelProvider === "bonsai" && (
-            <p>
-              <button
-                type="button"
-                className="icon-text-button"
-                disabled={savingModel || restarting}
-                onClick={() => saveModel(true)}
-              >
-                {installingModel
-                  ? "Installing Bonsai…"
-                  : "Install & use Bonsai 8B"}
-              </button>
-            </p>
-          )}
-          {installProgress && (
-            <p role="status" aria-live="polite">
-              {installProgress}
-            </p>
-          )}
-          <p>
-            Saving restarts Paperless. Wait for active uploads to finish first.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="primary-button"
-          disabled={
-            savingModel ||
-            restarting ||
-            (modelProvider === dashboard.settings.model_provider &&
-              dashboard.settings.model_enabled)
-          }
-          onClick={() => saveModel()}
-        >
-          {restarting
-            ? "Restarting Paperless…"
-            : savingModel
-              ? "Checking model…"
-              : "Save model"}
-        </button>
-      </section>
-      {!dashboard.settings.setup_required && (
-        <EmbeddingSettings dashboard={dashboard} onRefresh={onRefresh} />
-      )}
-      {setupError && (
-        <div className="form-error" role="alert">
-          {setupError}
-        </div>
-      )}
-      <div className="setup-rows">
-        <SetupRow
-          icon={<Inbox />}
-          title="Scanner inbox"
-          value={dashboard.settings.inbox}
-          state={
-            dashboard.settings.scanner_share_ready
-              ? "SMB ready"
-              : "SMB setup needed"
-          }
-          ok={dashboard.settings.scanner_share_ready}
-        />
-        <SetupRow
-          icon={<Archive />}
-          title="Documents directory"
-          value={dashboard.settings.archive_root || "Not selected"}
-          state={
-            dashboard.settings.archive_exists
-              ? "Connected"
-              : dashboard.settings.setup_required
-                ? "Selection required"
-                : "Unavailable"
-          }
-          ok={dashboard.settings.archive_exists}
-        />
-        <SetupRow
-          icon={<FileSearch />}
-          title="Local model"
-          value={
-            dashboard.settings.model_enabled
-              ? dashboard.settings.model_provider === "fm"
-                ? "Apple Foundation Models · system"
-                : `${dashboard.settings.model_provider === "bonsai" ? "Bonsai" : "Ollama"} · ${dashboard.settings.model}`
-              : "Local rules only"
-          }
-          state={dashboard.settings.model_enabled ? "Configured" : "Disabled"}
-          ok={dashboard.settings.model_enabled}
-        />
-      </div>
-      {!dashboard.settings.setup_required && (
-        <>
-          <RecipientSettings dashboard={dashboard} onRefresh={onRefresh} />
-          <section className="folder-browser">
-            <div>
-              <span className="eyebrow">Document folders</span>
-              <h3>{dashboard.folders.length} available destinations</h3>
-            </div>
-            <button
-              type="button"
-              className="icon-text-button"
-              disabled={refreshing}
-              onClick={async () => {
-                setRefreshing(true);
-                await api.refreshFolders();
-                await onRefresh();
-                setRefreshing(false);
-              }}
-            >
-              <RefreshCw className={refreshing ? "spin" : ""} /> Refresh
-            </button>
-            <div className="folder-grid">
-              {dashboard.folders.map((folder) => (
-                <span key={folder}>
-                  <FolderArchive /> {folder}
-                </span>
-              ))}
-            </div>
-          </section>
-        </>
-      )}
-    </section>
-  );
-}
-
-function SetupRow({
-  icon,
-  title,
-  value,
-  state,
-  ok,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  value: string;
-  state: string;
-  ok: boolean;
-}) {
-  return (
-    <div className="setup-row">
-      <div className="round-icon">{icon}</div>
-      <div>
-        <strong>{title}</strong>
-        <span>{value}</span>
-      </div>
-      <b className={ok ? "setup-status ok" : "setup-status bad"}>
-        {ok ? <Check /> : <CircleAlert />}
-        {state}
-      </b>
-    </div>
-  );
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
