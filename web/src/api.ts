@@ -102,6 +102,7 @@ export const api = {
       filename: string;
       document_type: string;
       physical_original_action?: string;
+      archive_mode?: "replace" | "keep_both";
       recipient_profile_id?: number;
       recipient?: string;
       recipient_scope?: string;

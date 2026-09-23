@@ -827,7 +827,9 @@ function ReprocessButton({
       </button>
       <p>
         Run OCR and classification again, then review the results.
-        {job.final_path ? " Existing archived files are kept." : ""}
+        {job.final_path
+          ? " The saved file stays in place until you approve. You can then replace it or keep both files."
+          : ""}
       </p>
       {error && (
         <div className="form-error" role="alert">
@@ -1228,6 +1230,9 @@ function JobDetail({
       ? classification.physical_original_action
       : "review") ||
     "review";
+  const [archiveMode, setArchiveMode] = useState<"replace" | "keep_both">(
+    "replace",
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -1239,6 +1244,7 @@ function JobDetail({
     setFilename(classification.suggested_filename || job.source_filename);
     setDocumentType(classification.document_type || "unknown");
     setRecipientChoice(savedRecipientChoice(classification, profiles));
+    setArchiveMode("replace");
     setError("");
     // Keep edits intact while other documents trigger dashboard refreshes.
   }, [job.id]);
@@ -1251,6 +1257,7 @@ function JobDetail({
         folder,
         filename,
         document_type: documentType,
+        ...(job.final_path ? { archive_mode: archiveMode } : {}),
         ...(recipientChoice === "new"
           ? { recipient, recipient_scope: recipientScope }
           : { recipient_profile_id: Number(recipientChoice) }),
@@ -1492,6 +1499,33 @@ function JobDetail({
               {folder ? `/${folder}` : ""}/{filename}
             </span>
           </div>
+          {job.final_path && (
+            <div className="archive-choice">
+              <span className="eyebrow">Previously saved file</span>
+              <p className="previous-path">{job.final_path}</p>
+              <label>
+                <span>When you approve</span>
+                <select
+                  value={archiveMode}
+                  disabled={saving}
+                  onChange={(event) =>
+                    setArchiveMode(
+                      event.target.value as "replace" | "keep_both",
+                    )
+                  }
+                >
+                  <option value="replace">Replace previous file</option>
+                  <option value="keep_both">Keep both files</option>
+                </select>
+              </label>
+              <p>
+                {archiveMode === "replace"
+                  ? "Save the reviewed version at the destination above and remove the previous file, even if its name or folder changed."
+                  : "Keep the previous file and save another copy. This document will point to the newly saved copy."}{" "}
+                If another file already uses the name, a number will be added.
+              </p>
+            </div>
+          )}
           {error && <div className="form-error">{error}</div>}
           <p className="learning-note">
             Approval saves your recipient and folder choices locally to guide
@@ -1512,8 +1546,12 @@ function JobDetail({
               }
               onClick={approve}
             >
-              {saving ? <LoaderCircle className="spin" /> : <Check />} Approve &
-              archive
+              {saving ? <LoaderCircle className="spin" /> : <Check />}
+              {job.final_path
+                ? archiveMode === "replace"
+                  ? "Approve & replace"
+                  : "Approve & keep both"
+                : "Approve & archive"}
             </button>
             <button
               type="button"

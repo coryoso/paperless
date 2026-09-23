@@ -2142,3 +2142,22 @@ button:focus-visible {
   margin: 0;
   padding: 0 24px 18px;
 }
+
+.archive-choice {
+  grid-column: 1 / -1;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--white);
+}
+.archive-choice p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 10px 0 0;
+}
+.archive-choice .previous-path {
+  margin: 6px 0 14px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
