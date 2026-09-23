@@ -23,6 +23,7 @@ import (
 	"paperless/internal/config"
 	"paperless/internal/db"
 	"paperless/internal/db/sqlc"
+	"paperless/internal/document"
 	"paperless/internal/ocr"
 	"paperless/internal/policy"
 	"paperless/internal/progress"
@@ -54,6 +55,8 @@ type processingAttempt struct {
 }
 
 type Processor struct {
+	pagesMu               sync.Mutex
+	blocksMu              sync.Mutex
 	processingMu          sync.Mutex
 	activeJobs            map[string]*processingAttempt
 	similarityMu          sync.RWMutex
@@ -335,6 +338,9 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	if err != nil {
 		return err
 	}
+	if err := p.saveDocumentBlocks(ctx, jobID, ocrResult.BlockDocument); err != nil {
+		return err
+	}
 	if err := p.store.Queries.SetOCRComplete(ctx, sqlc.SetOCRCompleteParams{
 		CurrentPath: ocrResult.SearchablePDF,
 		TextPath:    ocrResult.TextPath,
@@ -361,7 +367,12 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	}
 	routingFolders := candidateFolders(ocrResult.Text, folders, 24)
 	reporter.Info("classify", "folders", fmt.Sprintf("Selected %d of %d existing archive folders for routing.", len(routingFolders), len(folders)), len(routingFolders), len(folders), 87)
-	classification := p.classifyDocument(ctx, ocrResult.ReadingText(), filepath.Base(inboxPath), scanTime, folders, reporter, ocrResult.Layout.Markdown)
+	p.labelDocumentBlocks(ctx, &ocrResult.BlockDocument, reporter)
+	if err := p.saveDocumentBlocks(ctx, jobID, ocrResult.BlockDocument); err != nil {
+		return err
+	}
+	classification := p.classifyDocument(ctx, ocrResult.ReadingText(), filepath.Base(inboxPath), scanTime, folders, reporter, ocrResult.BlockDocument.ModelJSON())
+	classify.ApplyUnified(&classification, ocrResult.BlockDocument.Unified)
 	classificationJSON, _ := json.Marshal(classification)
 	if err := p.store.Queries.SetClassified(ctx, sqlc.SetClassifiedParams{
 		ClassificationJson:     string(classificationJSON),
@@ -376,6 +387,22 @@ func (p *Processor) processJob(ctx context.Context, jobID, inboxPath string, sca
 	}
 	p.notifyDashboard()
 
+	// Suggested cuts always pass through review so users can restore a page.
+	p.pagesMu.Lock()
+	pageJob, pageErr := p.store.Queries.GetJob(ctx, jobID)
+	if pageErr == nil {
+		choices, e := p.pageChoices(ctx, pageJob)
+		pageErr = e
+		for _, choice := range choices {
+			if choice.SuggestedBlank {
+				forceReview = true
+			}
+		}
+	}
+	p.pagesMu.Unlock()
+	if pageErr != nil {
+		return pageErr
+	}
 	decision := policy.Evaluate(ctx, p.cfg, p.store.Queries, classification)
 	if decision.AutoFile && !forceReview {
 		finalPath, err := p.finalPath(classification.SuggestedFolder, classification.SuggestedFilename)
@@ -453,7 +480,9 @@ func (p *Processor) dryRunFile(ctx context.Context, path string, runID string, r
 	if err != nil {
 		return DryRunResult{}, err
 	}
-	classification := p.classifyDocument(ctx, ocrResult.ReadingText(), filepath.Base(path), info.ModTime(), folders, reporter, ocrResult.Layout.Markdown)
+	p.labelDocumentBlocks(ctx, &ocrResult.BlockDocument, reporter)
+	classification := p.classifyDocument(ctx, ocrResult.ReadingText(), filepath.Base(path), info.ModTime(), folders, reporter, ocrResult.BlockDocument.ModelJSON())
+	classify.ApplyUnified(&classification, ocrResult.BlockDocument.Unified)
 	reporter.Info("policy", "evaluate", "Checking auto-file policy.", 0, 0, 97)
 	decision := policy.Evaluate(ctx, p.cfg, p.store.Queries, classification)
 	suggestedPath := classification.SuggestedFilename
@@ -475,12 +504,14 @@ func (p *Processor) dryRunFile(ctx context.Context, path string, runID string, r
 }
 
 type RecipientCorrection struct {
-	ProfileID int64  `json:"recipient_profile_id"`
-	Recipient string `json:"recipient"`
-	Scope     string `json:"recipient_scope"`
+	PostalAddress *document.PostalAddress `json:"recipient_postal_address,omitempty"`
+	Addresses     []string                `json:"recipient_addresses"`
+	ProfileID     int64                   `json:"recipient_profile_id"`
+	Recipient     string                  `json:"recipient"`
+	Scope         string                  `json:"recipient_scope"`
 }
 
-func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, documentType, physicalAction, archiveMode string, recipient ...RecipientCorrection) (string, error) {
+func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, physicalAction, archiveMode string, recipient ...RecipientCorrection) (string, error) {
 	p.processingMu.Lock()
 	defer p.processingMu.Unlock()
 	if archiveMode != "" && archiveMode != "replace" && archiveMode != "keep_both" {
@@ -503,10 +534,6 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 	if folder == "" {
 		return "", errors.New("folder is required")
 	}
-	documentType = classify.NormalizeDocumentType(documentType)
-	if documentType == "" {
-		return "", errors.New("document type is required")
-	}
 	var c classify.Classification
 	_ = json.Unmarshal([]byte(job.ClassificationJson), &c)
 	if c.DetectedRecipient == "" {
@@ -518,6 +545,7 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 	}
 	var profileID int64
 	var recipientName string
+	var recipientAddresses []string
 	if len(recipient) > 0 {
 		correction := recipient[0]
 		if correction.ProfileID != 0 {
@@ -525,6 +553,7 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 				if profile.ID == correction.ProfileID {
 					profileID = profile.ID
 					correction.Recipient, correction.Scope = profile.Name, profile.Scope
+					correction.Addresses = profile.Addresses
 					break
 				}
 			}
@@ -535,15 +564,71 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 		if len(strings.TrimSpace(correction.Recipient)) > 200 {
 			return "", errors.New("recipient name is too long")
 		}
-		recipientName = strings.TrimSpace(correction.Recipient)
+		recipientName = document.NormalizeName(correction.Recipient, correction.Scope == "personal" || correction.Scope == "sole_proprietor")
+		if profileID != 0 {
+			recipientName = correction.Recipient
+		}
+		if len(correction.Addresses) > 30 {
+			return "", errors.New("at most 30 recipient addresses are allowed")
+		}
+		for _, address := range correction.Addresses {
+			if len(address) > 2000 {
+				return "", errors.New("recipient address is too long")
+			}
+		}
+		recipientAddresses = correction.Addresses
+		if c.Metadata == nil {
+			c.Metadata = &document.Metadata{Version: document.MetadataVersion, Date: c.DocumentDate, Subject: c.Subject, Sender: document.NormalizeIdentity(document.Party{}, false), Recipient: document.NormalizeIdentity(document.Party{}, true)}
+		}
+		identity := document.NormalizeIdentity(document.Party{Names: []string{recipientName}, Addresses: recipientAddresses}, correction.Scope == "personal" || correction.Scope == "sole_proprietor")
+		if profileID == 0 && correction.PostalAddress != nil {
+			address := *correction.PostalAddress
+			values := []*string{&address.StreetName, &address.HouseNumber, &address.PostalCode, &address.City}
+			for _, value := range values {
+				*value = strings.TrimSpace(*value)
+				if len(*value) > 500 {
+					return "", errors.New("postal address component is too long")
+				}
+			}
+			address.Lines = nil
+			for _, line := range []string{strings.TrimSpace(address.StreetName + " " + address.HouseNumber), strings.TrimSpace(address.PostalCode + " " + address.City)} {
+				if line != "" {
+					address.Lines = append(address.Lines, line)
+				}
+			}
+			identity.Addresses = []document.PostalAddress{}
+			recipientAddresses = nil
+			if len(strings.Join(address.Lines, "\n")) > 2000 {
+				return "", errors.New("recipient address is too long")
+			}
+			if len(address.Lines) > 0 {
+				identity.Addresses = append(identity.Addresses, address)
+				recipientAddresses = []string{strings.Join(address.Lines, "\n")}
+			}
+			identity.PrimaryAddress = 0
+			identity.AddressSelection = "Confirmed during document review"
+		}
+
+		if profileID != 0 {
+			identity.Names = []string{recipientName}
+			identity.ProfileID = profileID
+			identity.Origin = "profile"
+			if len(identity.Addresses) == 0 {
+				identity.Addresses = c.Metadata.Recipient.Addresses
+			}
+		} else {
+			identity.Origin = "review"
+		}
+		c.Metadata.Recipient = identity
+		c.RecipientDisplay = strings.Join(identity.Names, ", ")
 		c.RecipientProfileID = profileID
 		if !classify.ValidRecipientScope(correction.Scope) {
 			return "", errors.New("invalid recipient capacity")
 		}
-		if correction.Scope != "unknown" && strings.TrimSpace(correction.Recipient) == "" {
+		if correction.Scope != "unknown" && recipientName == "" {
 			return "", errors.New("recipient name is required for a personal or business capacity")
 		}
-		c.Recipient = classify.Slug(correction.Recipient)
+		c.Recipient = classify.Slug(recipientName)
 		c.RecipientScope = correction.Scope
 		c.RecipientNeedsReview = correction.Scope == "unknown"
 		c.RecipientEvidence = "Confirmed during document review"
@@ -568,7 +653,18 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 	if err != nil {
 		return "", err
 	}
-	archive, err := p.prepareReviewArchive(ctx, job, destination, archiveMode == "replace")
+	p.pagesMu.Lock()
+	defer p.pagesMu.Unlock()
+	selectedPath, _, selectionErr := p.selectedPDF(ctx, job)
+	if selectionErr != nil {
+		return "", selectionErr
+	}
+	if selectedPath != job.CurrentPath {
+		defer os.Remove(selectedPath)
+	}
+	archiveJob := job
+	archiveJob.CurrentPath = selectedPath
+	archive, err := p.prepareReviewArchive(ctx, archiveJob, destination, archiveMode == "replace")
 	if err != nil {
 		return "", err
 	}
@@ -578,27 +674,23 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 		}
 	}()
 	finalPath := archive.path
-	c.DocumentType = documentType
 	c.SuggestedFolder = strings.Trim(folder, "/")
 	c.SuggestedFilename = filepath.Base(finalPath)
-	c.Sensitive = classify.DocumentTypeSensitive(documentType)
-	physicalAction = classify.PaperRecommendation(p.cfg, documentType)
+	physicalAction = "review"
 	c.PhysicalOriginalAction = physicalAction
 	classificationJSON, err := json.Marshal(c)
 	if err != nil {
 		return "", err
 	}
-	if err := p.store.Queries.SetClassified(ctx, sqlc.SetClassifiedParams{
-		ClassificationJson:     string(classificationJSON),
-		Confidence:             job.Confidence,
-		Summary:                job.Summary,
-		PhysicalOriginalAction: physicalAction,
-		Status:                 job.Status,
-		UpdatedAt:              db.Now(),
-		ID:                     jobID,
-	}); err != nil {
+	p.blocksMu.Lock()
+	err = p.store.SaveReviewedClassification(ctx, sqlc.SetClassifiedParams{
+		ClassificationJson: string(classificationJSON), Confidence: job.Confidence, Summary: job.Summary, PhysicalOriginalAction: physicalAction, Status: job.Status, UpdatedAt: db.Now(), ID: jobID,
+	}, c.Metadata)
+	p.blocksMu.Unlock()
+	if err != nil {
 		return "", err
 	}
+
 	// The correction is already saved. Notify even if a later archive/learning
 	// step fails, so other dashboards display the state that actually persisted.
 	defer p.notifyDashboard()
@@ -614,18 +706,18 @@ func (p *Processor) ApproveJob(ctx context.Context, jobID, folder, filename, doc
 		return "", err
 	}
 	archive.committed = true
-	if err := archive.cleanup(job.CurrentPath); err != nil {
+	if err := archive.cleanup(selectedPath); err != nil {
 		return "", fmt.Errorf("document archived, but could not remove the previous copy: %w", err)
 	}
 	if err := p.store.LearnApproval(ctx, db.Approval{
 		RecipientProfileID: profileID,
 		RecipientName:      recipientName,
+		RecipientAddresses: recipientAddresses,
 		DetectedRecipient:  c.DetectedRecipient,
 		JobID:              jobID,
 		Sender:             c.Sender,
 		Recipient:          c.Recipient,
 		RecipientScope:     c.RecipientScope,
-		DocumentType:       c.DocumentType,
 		Folder:             c.SuggestedFolder,
 		Filename:           c.SuggestedFilename,
 		Weight:             1,
@@ -827,7 +919,6 @@ func candidateFolders(text string, folders []string, limit int) []string {
 		return append([]string(nil), folders...)
 	}
 	haystack := classify.Slug(text)
-	receiptLike := classify.ReceiptLikely(text)
 	type scoredFolder struct {
 		path  string
 		score int
@@ -845,9 +936,7 @@ func candidateFolders(text string, folders []string, limit int) []string {
 		if folderSlug != "" && strings.Contains(haystack, folderSlug) {
 			score += 30
 		}
-		if receiptLike && containsAnyString(folderSlug, "belege", "receipt", "quittung") {
-			score += 100
-		}
+
 		scored = append(scored, scoredFolder{path: folder, score: score, depth: depth(folder)})
 	}
 	sort.SliceStable(scored, func(i, j int) bool {

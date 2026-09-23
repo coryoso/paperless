@@ -13,6 +13,7 @@ import (
 	"paperless/internal/config"
 	"paperless/internal/db"
 	"paperless/internal/db/sqlc"
+	"paperless/internal/document"
 )
 
 func TestSimilarityBackfillCachingAndProviderIndependence(t *testing.T) {
@@ -83,7 +84,14 @@ func TestSimilarityBackfillCachingAndProviderIndependence(t *testing.T) {
 	if recorder.Code != 200 || !strings.Contains(recorder.Body.String(), "old-approved") || strings.Contains(recorder.Body.String(), "automatic") {
 		t.Fatal(recorder.Body.String())
 	}
-	os.WriteFile(filepath.Join(cfg.Paths.Processing, "new-review", "document.md"), []byte("Changed content."), 0600)
+	doc, err := p.store.DocumentBlocks(t.Context(), "new-review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Blocks = []document.Block{{ID: 1, Page: 1, Content: "Changed content."}}
+	if err := p.saveDocumentBlocks(t.Context(), "new-review", doc); err != nil {
+		t.Fatal(err)
+	}
 	p.indexSimilarity(t.Context())
 	if calls.Load() != 3 {
 		t.Fatal("content change did not rebuild", calls.Load())
@@ -103,7 +111,14 @@ func TestSimilarityBackfillCachingAndProviderIndependence(t *testing.T) {
 	if p.similaritySnapshot().Status != "ready" {
 		t.Fatal("did not recover")
 	}
-	os.Remove(filepath.Join(cfg.Paths.Processing, "old-approved", "document.md"))
+	doc, err = p.store.DocumentBlocks(t.Context(), "old-approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.Blocks = nil
+	if err := p.saveDocumentBlocks(t.Context(), "old-approved", doc); err != nil {
+		t.Fatal(err)
+	}
 	p.indexSimilarity(t.Context())
 	matches, err := p.store.SimilarDocuments(t.Context(), "new-review", p.similaritySnapshot().ModelKey)
 	if err != nil || len(matches) != 0 {

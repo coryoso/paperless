@@ -58,10 +58,10 @@ Drop a PDF, PNG, or JPEG into the scanner inbox, or upload it in the dashboard. 
 
 The review screen lets you:
 
-- inspect the original or searchable PDF, OCR overlay, formatted text, Markdown, and raw text;
+- inspect the original or searchable PDF, OCR overlay, saved JSON blocks, formatted text, and consolidated metadata;
 - correct the recipient and their personal or business capacity;
 - choose or create a relative archive folder;
-- adjust the document type and filename;
+- adjust the recipient, folder, and filename;
 - approve filing or reject and permanently delete the document.
 
 Email and portal PDFs keep their existing text layer when it is complete. Scanned and mixed-content PDFs use the OCR pipeline.
@@ -74,9 +74,78 @@ Receipts are detected from their scan geometry and point-of-sale text and receiv
 
 Filing is intentionally conservative. Approved decisions become local routing examples, but conflicting destinations, unknown recipients, and ambiguous business capacities continue to require review. Moving a file directly in Finder does not teach Paperless.
 
-Mahnungen and Zahlungserinnerungen use the **Payment reminder** document type. Recipient detection considers both the addressee and the document's business context: multiple names can represent a private household or business partners, including a GbR without an explicit legal suffix. Joint business obligations use business filing areas; personal correspondence stays separate. Inferred partnerships and shared personal/business names require confirmation when the identity remains ambiguous.
+Recipient detection considers both the addressee and the document's business context: multiple names can represent a private household or business partners, including a GbR without an explicit legal suffix. Joint business obligations use business filing areas; personal correspondence stays separate. Inferred partnerships and shared personal/business names require confirmation when the identity remains ambiguous.
 
 In **Setup → Recipients & learning**, add **Shared postal addresses** for locations receiving mail for several people, or edit a recipient to save addresses for that person/business. Enter the street and house number followed by the postcode and city, with a blank line between addresses. Detection prioritizes names immediately above matching postal address blocks and recognizes common spellings such as `Straße` and `Str.`. Address associations currently support numeric 4–5 digit postcodes. A shared address never chooses a person by itself; conflicting identities or personal/business evidence still require review. The detected address is shown with the document, and saved address changes apply to subsequent classifications without restarting.
+
+### Structured document JSON
+
+In the document preview, **Overlay → Bounding boxes** shows the saved
+proximity grouping of OCR words. The automatic distance is each page's median
+word height. The default distance is applied automatically, without viewer controls. Words join when the
+Euclidean gap between their rectangles is within that distance, including
+connections through neighboring words. Groups never cross pages.
+
+**Text → JSON** shows the same groups with a **Save JSON** download. Each object
+contains `id`, `page`, `type`, `representation`, `position: {x, y}`,
+`size: {width, height}`, and `content`. Coordinates use source-image pixels from
+the top-left corner. Groups follow page order, then top-to-bottom and left-to-right,
+retaining line breaks within each group.
+
+Bonsai automatically fills the roles during processing: `text`, `sender`, `recipient`,
+`date`, `subject`, `reference`, or `payment`. Each block gets one dominant role;
+uncertain or mixed content uses `text`. These roles apply to all kinds of documents,
+not just invoices. `representation` separately describes a `paragraph` or `table`.
+Repeated aligned cells provide a table hint; multiple text lines alone do not.
+Labels appear on the bounding boxes and in the JSON. The model only supplies labels;
+the original text and geometry are preserved.
+Role and table predictions are experimental. Inspect them against the scan:
+long, noisy documents and detached address fragments can be mislabeled, and
+proximity can combine fields with different roles.
+
+This uses Bonsai's constrained JSON schema, classifying one block at a time.
+The model receives compact JSON with only `id` and `content`; page numbers,
+positions, dimensions, old labels and geometry hints stay out of the prompt.
+Explicit model labels such as `document_title` map back to the seven public types.
+Short fragments (up to 160 characters, without sentence-ending punctuation)
+initially labeled `text` get a second pass
+with up to three preceding and three following blocks from the same page.
+This gives ambiguous fragments nearby context without diluting clear fields with
+the entire document. Table candidates additionally request a representation label;
+blocks without aligned cells use `paragraph`.
+
+The running server's tokenizer and context size are checked with space reserved
+for output. Oversized input is rejected explicitly, never silently truncated.
+Requests are limited to 256 blocks and a 1 MiB request body; text capacity is
+checked against the actual token window. Any invalid model response rejects the
+whole result.
+Bonsai 8B supports a 65,536-token context window. To use it, configure
+`llm.context_tokens = 65536` and start the model runtime with the same context size
+(the managed installer uses this setting when creating its LaunchAgent).
+
+The JSON array is persisted in SQLite with its OCR source revision. Labels and
+geometry survive reloads and are included in database backups. The overlay renders
+these same saved coordinates. OCR words are clustered at the default distance,
+classified, then consolidated into a separately persisted `unified_json` document.
+Same-role metadata fragments contained in a more complete occurrence are merged;
+conflicting values and distinct body paragraphs remain separate. Every consolidated
+entry retains all contributing block IDs. Original blocks remain unchanged.
+
+A constrained Bonsai pass extracts sender/recipient names, postal addresses, phones,
+faxes, emails, websites, and the original-language subject from candidate groups.
+Values unsupported by source content are dropped; incomplete extraction stays
+visible for review. Text offers **Formatted**, **JSON**, and **Fields** views.
+Fields shows normalized date, subject, sender and recipient details, plus consolidated references, payment information and source blocks;
+original OCR blocks and extracted values remain unchanged. Both JSON representations can be downloaded. The document title uses its subject,
+with multiline sender and recipient details shown separately. Proposed filenames use
+`date__sender__subject.pdf`, retaining the subject's language and normalizing unsafe
+filename characters. Missing subjects use `document`, not a translated summary.
+
+New documents no longer generate or store Markdown. Raw OCR and searchable PDFs
+remain source artifacts. Native-text PDFs use paragraph blocks with null position
+and size. Existing records without unified metadata can be reprocessed; legacy
+Markdown-only records can still be imported once for compatibility. Bonsai is
+currently required for automatic block labels and structured metadata extraction.
 
 ### Similar previously approved documents
 
@@ -90,9 +159,9 @@ ollama pull embeddinggemma
 
 If Ollama is already running, only the model download is needed. Save the similarity settings after active uploads finish; Paperless checks the model and restarts. Similarity uses a separate embedding model and works alongside **Apple Foundation Models, Bonsai, Ollama, or local rules** for classification. The first version supports Ollama embeddings on a loopback address only. Selecting FM or Bonsai does not install or start Ollama automatically.
 
-The review panel shows up to five closest previously approved documents, their approved folders and recipients, and the matching Markdown passages. These are comparisons, not filing-confidence scores: related documents can have different purposes or recipients. Similarity does not change classification, auto-filing, or your review choices.
+The review panel shows up to five closest previously approved documents, their approved folders and recipients, and the matching block text. These are comparisons, not filing-confidence scores: related documents can have different purposes or recipients. Similarity does not change classification, auto-filing, or your review choices.
 
-Existing approved documents and documents awaiting review are indexed in the background. Long Markdown is split into sections, preserving the source text. The index is stored in the local SQLite database using sqlite-vec cosine distance and is included in database backups. Content hashes and installed model digests trigger reindexing when text or model weights change. Deleting a document also deletes its embedding records. Missing text and service outages are shown without blocking review; the service retries indexing every 30 seconds. Text exceeding 2 MiB or 256 sections is reported as unavailable for similarity rather than silently truncated.
+Existing approved documents and documents awaiting review are indexed in the background. Persisted unified JSON supplies deduplicated entry text for embeddings; long entries split into overlapping sections without truncation. Older records fall back to deterministic consolidation until reprocessed. JSON syntax, labels and coordinates are not embedded. Each stored chunk retains all contributing source block IDs, whose metadata and coordinates remain in the original JSON. The index is stored in the local SQLite database using sqlite-vec cosine distance and is included in database backups. JSON hashes and installed model digests trigger reindexing when the saved document or model weights change. Saving JSON atomically invalidates previous vectors, and the versioned index rebuilds previous Markdown embeddings. Deleting a document also deletes its embedding records. Missing text and service outages are shown without blocking review; the service retries indexing every 30 seconds. Text exceeding 2 MiB or 256 sections is reported as unavailable for similarity rather than silently truncated.
 
 Under **Embedding model settings**, you can select another installed Ollama embedding model or local server address. Configuration is separate from `[llm]` and `[bonsai]`:
 
@@ -279,7 +348,7 @@ make web-dev
 
 SQL migrations live in `internal/db/migrations/`, queries in `internal/db/queries/`, and generated sqlc code in `internal/db/sqlc/`. After changing SQL, run `make sqlc` and `make test`.
 
-The OCR pipeline retains the raw text and searchable PDF separately from reconstructed Markdown. Layout reconstruction estimates headings, paragraphs, columns, and table cells from Tesseract word positions without rewriting recognized words. Uploads use two OCR workers by default; configure `ocr.workers` from 1–8 to change concurrency.
+The OCR pipeline retains the raw text and searchable PDF separately from the saved block JSON. Formatted text renders saved blocks directly; Markdown is not generated. Uploads use two OCR workers by default; configure `ocr.workers` from 1–8 to change concurrency.
 
 ## Releases and the Homebrew tap
 
@@ -295,3 +364,30 @@ Prereleases receive downloadable artifacts but do not update Homebrew. The tap c
 GitHub's **Generate release notes** uses [.github/release.yml](.github/release.yml) to group merged pull requests into **Features** (`enhancement` label), **Fixes** (`bug` label), and **Miscellaneous** (everything else, including unlabeled PRs).
 
 The [PR labeling workflow](.github/workflows/pr-labels.yml) automatically syncs these labels from conventional PR titles when a PR is opened, edited, reopened, or closed: `feat: ...` and `feat(scope): ...` get `enhancement`; `fix: ...` and `fix(scope): ...` get `bug`. Breaking-change prefixes such as `feat!: ...` and `fix(scope)!: ...` work too. Other prefixes go under Miscellaneous. The workflow manages both category labels, removing stale ones after title changes while preserving unrelated labels. Wait for it to finish before generating release notes.
+
+Document categories have been removed from extraction schemas, review controls,
+SQLite routing examples and learned routing keys. Routing uses sender, recipient,
+capacity and destination. Paper retention requires review rather than a category rule.
+The normalized metadata projection removes salutations and normalizes shouting-case
+names and postal lines while preserving mixed-case spelling and short organization
+acronyms. Postal addresses retain ordered lines instead of assuming a country-specific
+address schema. Saved recipient profiles override the normalized identity on approval;
+the extracted identity and source OCR are preserved. Original upload names are available
+in a labeled disclosure; the header shows the current proposed filename.
+
+
+Postal addresses persist explicit `street_name`, `house_number`, `postal_code` and
+`city` components alongside source lines. Unknown components stay empty. The most
+complete address is primary (first occurrence breaks ties); alternatives remain
+available. The recipient review form accepts separate street/number, postcode and
+city inputs, and saves explicit components when approved. Dates use the browser's
+locale in the interface and remain ISO dates in JSON and filenames.
+
+The PDF viewer persists page choices in `document_pages`. Scanned pages with very
+little dark interior content and no confident OCR text are suggested for exclusion;
+printed forms and photos are retained. Empty embedded-text pages also require a
+visual blank check. Suggested exclusions force review before automatic filing.
+Users can restore any suggested page, compare with the original, and preview the
+selected PDF. Approval files that selection. Original scans and OCR blocks retain
+all source pages and their original numbering; page cuts do not erase extraction
+evidence. At least one page must remain. Reprocessing resets page decisions.

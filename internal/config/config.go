@@ -137,8 +137,6 @@ type Policy struct {
 	MinApprovedExamples     int      `toml:"min_approved_examples"`
 	AllowNewTopLevelFolders bool     `toml:"allow_new_top_level_folders"`
 	KnownFolders            []string `toml:"known_folders"`
-	DiscardDocumentTypes    []string `toml:"discard_document_types"`
-	KeepDocumentTypes       []string `toml:"keep_document_types"`
 }
 
 func DefaultPath() string {
@@ -194,23 +192,6 @@ func Default() Config {
 			MinApprovedExamples:     2,
 			AllowNewTopLevelFolders: false,
 			KnownFolders:            []string{},
-			DiscardDocumentTypes: []string{
-				"receipt",
-				"delivery-receipt",
-				"utility-information",
-				"routine-invoice",
-				"marketing",
-			},
-			KeepDocumentTypes: []string{
-				"contract",
-				"insurance-policy",
-				"tax-letter",
-				"government-letter",
-				"legal-letter",
-				"medical-document",
-				"bank-document",
-				"identity-document",
-			},
 		},
 		SenderFolders: map[string]string{},
 	}

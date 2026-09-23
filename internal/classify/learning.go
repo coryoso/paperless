@@ -11,7 +11,6 @@ type RoutingExample struct {
 	Sender         string `json:"sender"`
 	Recipient      string `json:"recipient"`
 	RecipientScope string `json:"recipient_scope"`
-	DocumentType   string `json:"document_type"`
 	Folder         string `json:"folder"`
 	Filename       string `json:"filename"`
 	Approvals      int64  `json:"approvals"`
@@ -39,9 +38,6 @@ func relevantExamples(c Classification, history []RoutingExample, folders []stri
 			s := 0
 			if compactName(e.Sender) == compactName(c.Sender) {
 				s += 4
-			}
-			if e.DocumentType == c.DocumentType {
-				s += 2
 			}
 			return s
 		}
@@ -76,7 +72,7 @@ func sameRecipient(a, b, scope string, profiles []config.RecipientProfile) bool 
 func applyLearnedRouting(c *Classification, examples []RoutingExample) {
 	votes := map[string]int64{}
 	for _, example := range examples {
-		if compactName(example.Sender) == compactName(c.Sender) && example.DocumentType == c.DocumentType {
+		if compactName(example.Sender) == compactName(c.Sender) {
 			votes[example.Folder] += example.Approvals
 		}
 	}
@@ -91,12 +87,12 @@ func applyLearnedRouting(c *Classification, examples []RoutingExample) {
 	if tied {
 		c.SuggestedFolder = ""
 		c.FolderRankings = nil
-		c.Reasons = append(c.Reasons, "conflicting approved destinations for this recipient and document type")
+		c.Reasons = append(c.Reasons, "conflicting approved destinations for this recipient")
 		return
 	}
 	if best != "" {
 		c.SuggestedFolder = best
-		c.Reasons = append(c.Reasons, "learned from approvals for the same sender, recipient, capacity and document type")
+		c.Reasons = append(c.Reasons, "learned from approvals for the same sender, recipient and capacity")
 		c.FolderRankings = rankSingle(best, c.Confidence, "previously approved destination")
 	}
 }

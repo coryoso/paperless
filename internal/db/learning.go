@@ -11,6 +11,7 @@ import (
 )
 
 type Approval struct {
+	RecipientAddresses []string
 	RecipientProfileID int64
 	RecipientName      string
 	DetectedRecipient  string
@@ -18,7 +19,6 @@ type Approval struct {
 	Sender             string
 	Recipient          string
 	RecipientScope     string
-	DocumentType       string
 	Folder             string
 	Filename           string
 	Weight             float64
@@ -76,7 +76,6 @@ func (s *Store) LearnApproval(ctx context.Context, approval Approval) error {
 		Sender:         approval.Sender,
 		Recipient:      approval.Recipient,
 		RecipientScope: approval.RecipientScope,
-		DocumentType:   approval.DocumentType,
 		Folder:         approval.Folder,
 		Filename:       approval.Filename,
 		Weight:         approval.Weight,
@@ -119,7 +118,12 @@ func (s *Store) LearnApproval(ctx context.Context, approval Approval) error {
 		if name == "" {
 			name = approval.Recipient
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO recipient_profiles (name, scope) VALUES (?, ?) ON CONFLICT(name, scope) DO NOTHING`, name, approval.RecipientScope); err != nil {
+		addresses, err := normalizeProfileAddresses(approval.RecipientAddresses)
+		if err != nil {
+			return err
+		}
+		rawAddresses, _ := json.Marshal(addresses)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO recipient_profiles (name, scope, addresses) VALUES (?, ?, ?) ON CONFLICT(name, scope) DO NOTHING`, name, approval.RecipientScope, string(rawAddresses)); err != nil {
 			return err
 		}
 	}

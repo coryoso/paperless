@@ -54,23 +54,6 @@ auto_file_min_confidence = 92
 min_approved_examples = 2
 allow_new_top_level_folders = false
 known_folders = []
-discard_document_types = [
-  "receipt",
-  "delivery-receipt",
-  "utility-information",
-  "routine-invoice",
-  "marketing",
-]
-keep_document_types = [
-  "contract",
-  "insurance-policy",
-  "tax-letter",
-  "government-letter",
-  "legal-letter",
-  "medical-document",
-  "bank-document",
-  "identity-document",
-]
 
 [sender_folders]
 

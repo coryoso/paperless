@@ -45,7 +45,7 @@ func archivedReviewFixture(t *testing.T) (*Processor, string, string, string) {
 
 func approveReviewAPI(t *testing.T, p *Processor, id, folder, filename, mode string) *httptest.ResponseRecorder {
 	t.Helper()
-	data := map[string]string{"folder": folder, "filename": filename, "document_type": "receipt"}
+	data := map[string]string{"folder": folder, "filename": filename}
 	if mode != "" {
 		data["archive_mode"] = mode
 	}
@@ -212,4 +212,58 @@ func TestArchiveExclusiveCopyPreservesCollision(t *testing.T) {
 		t.Fatalf("expected collision: %v", err)
 	}
 	assertArchiveContent(t, destination, "unrelated PDF")
+}
+
+// Exercise the interaction between page cuts and replacement/rollback. Stub only
+// qpdf so this filing regression runs in CI without an external PDF installation.
+func TestPageSelectionWithArchiveReplacement(t *testing.T) {
+	for _, mode := range []string{"replace", "keep_both", "rollback"} {
+		t.Run(mode, func(t *testing.T) {
+			p, id, old, review := archivedReviewFixture(t)
+			toolDir := t.TempDir()
+			script := "#!/bin/sh\n[ \"$4\" = \"1,3\" ] || exit 1\nfor argument do output=$argument; done\nprintf 'selected PDF' > \"$output\"\n"
+			if err := os.WriteFile(filepath.Join(toolDir, "qpdf"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", toolDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if _, err := p.store.Conn().ExecContext(t.Context(), `UPDATE jobs SET page_count=3 WHERE id=?`, id); err != nil {
+				t.Fatal(err)
+			}
+			for page := 1; page <= 3; page++ {
+				if _, err := p.store.Conn().ExecContext(t.Context(), `INSERT INTO document_pages(job_id,page,suggested_blank,excluded,reason) VALUES(?,?,?,?,?) ON CONFLICT(job_id,page) DO UPDATE SET suggested_blank=excluded.suggested_blank,excluded=excluded.excluded,reason=excluded.reason`, id, page, page == 2, page == 2, "test selection"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			archiveMode := mode
+			if mode == "rollback" {
+				archiveMode = "replace"
+				if _, err := p.store.Conn().ExecContext(t.Context(), `CREATE TRIGGER fail_cut_archive BEFORE UPDATE ON jobs WHEN NEW.status='archived' BEGIN SELECT RAISE(FAIL, 'simulated database failure'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			response := approveReviewAPI(t, p, id, "Letters", "old.pdf", archiveMode)
+			job, err := p.store.Queries.GetJob(t.Context(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "rollback" {
+				if response.Code != http.StatusBadRequest || job.Status != StatusNeedsReview {
+					t.Fatalf("expected failed review: %d %+v", response.Code, job)
+				}
+				assertArchiveContent(t, old, "previous PDF")
+			} else {
+				if response.Code != http.StatusOK || job.Status != StatusArchived {
+					t.Fatalf("approval: %d %s", response.Code, response.Body.String())
+				}
+				assertArchiveContent(t, job.FinalPath, "selected PDF")
+				if mode == "replace" && job.FinalPath != old {
+					t.Fatal("replacement used a different path")
+				}
+				if mode == "keep_both" {
+					assertArchiveContent(t, old, "previous PDF")
+				}
+			}
+			assertArchiveContent(t, review, "new PDF")
+		})
+	}
 }

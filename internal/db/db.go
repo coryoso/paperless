@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,7 +30,16 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	conn, err := sql.Open("sqlite", path)
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	// Connection-local PRAGMAs must also apply when database/sql replaces a
+	// connection after cancellation, not only to the first opened connection.
+	dsn := url.URL{Scheme: "file", Path: absolutePath}
+	query := url.Values{"_pragma": {"foreign_keys(1)"}}
+	dsn.RawQuery = query.Encode()
+	conn, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +54,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	store := &Store{conn: conn, Queries: sqlc.New(conn)}
 	if err := store.Migrate(ctx); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := store.BackfillMetadata(ctx); err != nil {
 		conn.Close()
 		return nil, err
 	}

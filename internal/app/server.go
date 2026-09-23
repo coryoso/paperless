@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"paperless/internal/document"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -27,7 +28,6 @@ import (
 	"paperless/internal/classify"
 	"paperless/internal/config"
 	"paperless/internal/db/sqlc"
-	"paperless/internal/ocr"
 	"paperless/internal/progress"
 )
 
@@ -61,19 +61,18 @@ type jobURLs struct {
 }
 
 type dashboardResponse struct {
-	Similarity           similarityState           `json:"similarity"`
-	PaperRecommendations map[string]string         `json:"paper_recommendations"`
-	DatabaseBackup       databaseBackupStatus      `json:"database_backup"`
-	Settings             dashboardSettings         `json:"settings"`
-	Stats                dashboardStats            `json:"stats"`
-	Folders              []string                  `json:"folders"`
-	ReviewJobs           []jobView                 `json:"review_jobs"`
-	RecentJobs           []jobView                 `json:"recent_jobs"`
-	AllJobs              []jobView                 `json:"all_jobs"`
-	RecipientProfiles    []config.RecipientProfile `json:"recipient_profiles"`
-	RecipientAddresses   []string                  `json:"recipient_addresses"`
-	LearningCount        int64                     `json:"learning_count"`
-	LearningPath         string                    `json:"learning_path"`
+	Similarity         similarityState           `json:"similarity"`
+	DatabaseBackup     databaseBackupStatus      `json:"database_backup"`
+	Settings           dashboardSettings         `json:"settings"`
+	Stats              dashboardStats            `json:"stats"`
+	Folders            []string                  `json:"folders"`
+	ReviewJobs         []jobView                 `json:"review_jobs"`
+	RecentJobs         []jobView                 `json:"recent_jobs"`
+	AllJobs            []jobView                 `json:"all_jobs"`
+	RecipientProfiles  []config.RecipientProfile `json:"recipient_profiles"`
+	RecipientAddresses []string                  `json:"recipient_addresses"`
+	LearningCount      int64                     `json:"learning_count"`
+	LearningPath       string                    `json:"learning_path"`
 }
 
 type dashboardSettings struct {
@@ -213,8 +212,12 @@ func (p *Processor) serve(ctx context.Context) error {
 	mux.HandleFunc("POST /api/internal/dashboard/notify", p.handleDashboardNotification)
 	mux.HandleFunc("GET /api/jobs", p.handleJobsAPI)
 	mux.HandleFunc("GET /api/jobs/{jobID}", p.handleJobAPI)
+	mux.HandleFunc("GET /api/jobs/{jobID}/page-selection", p.handlePageSelection)
+	mux.HandleFunc("POST /api/jobs/{jobID}/page-selection", p.handlePageSelection)
+	mux.HandleFunc("GET /api/jobs/{jobID}/selected.pdf", p.handleSelectedPDF)
 	mux.HandleFunc("GET /api/jobs/{jobID}/pages", p.handleJobPagesAPI)
-	mux.HandleFunc("GET /api/jobs/{jobID}/layout", p.handleJobLayoutAPI)
+	mux.HandleFunc("GET /api/jobs/{jobID}/blocks", p.handleDocumentBlocksAPI)
+	mux.HandleFunc("POST /api/jobs/{jobID}/classify-blocks", p.handleClassifyBlocksAPI)
 	mux.HandleFunc("POST /api/uploads", p.handleUploadAPI)
 	mux.HandleFunc("GET /api/uploads/{runID}/events", p.handleRunEvents)
 	mux.HandleFunc("POST /api/jobs/{jobID}/approve", p.handleApproveAPI)
@@ -307,13 +310,12 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		folders = []string{}
 	}
 	response := dashboardResponse{
-		Similarity:           p.similaritySnapshot(),
-		PaperRecommendations: classify.PaperRecommendations(p.cfg),
-		DatabaseBackup:       databaseBackups(p.cfg.Paths.ArchiveRoot),
-		RecipientProfiles:    profiles,
-		RecipientAddresses:   addresses,
-		LearningCount:        learningCount,
-		LearningPath:         p.cfg.DBPath(),
+		Similarity:         p.similaritySnapshot(),
+		DatabaseBackup:     databaseBackups(p.cfg.Paths.ArchiveRoot),
+		RecipientProfiles:  profiles,
+		RecipientAddresses: addresses,
+		LearningCount:      learningCount,
+		LearningPath:       p.cfg.DBPath(),
 		Settings: dashboardSettings{
 			EmbeddingsEnabled:   p.cfg.Embeddings.Enabled,
 			EmbeddingModel:      p.cfg.Embeddings.Model,
@@ -509,14 +511,15 @@ func (p *Processor) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 
 func (p *Processor) handleApproveAPI(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Folder                 string  `json:"folder"`
-		Filename               string  `json:"filename"`
-		DocumentType           string  `json:"document_type"`
-		PhysicalOriginalAction string  `json:"physical_original_action"`
-		ArchiveMode            string  `json:"archive_mode"`
-		RecipientProfileID     *int64  `json:"recipient_profile_id"`
-		Recipient              *string `json:"recipient"`
-		RecipientScope         *string `json:"recipient_scope"`
+		Folder                 string                  `json:"folder"`
+		Filename               string                  `json:"filename"`
+		PhysicalOriginalAction string                  `json:"physical_original_action"`
+		RecipientProfileID     *int64                  `json:"recipient_profile_id"`
+		Recipient              *string                 `json:"recipient"`
+		RecipientScope         *string                 `json:"recipient_scope"`
+		RecipientAddresses     []string                `json:"recipient_addresses"`
+		RecipientPostalAddress *document.PostalAddress `json:"recipient_postal_address"`
+		ArchiveMode            string                  `json:"archive_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeAPIError(w, err, http.StatusBadRequest)
@@ -534,9 +537,9 @@ func (p *Processor) handleApproveAPI(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, errors.New("recipient and capacity must be supplied together"), http.StatusBadRequest)
 			return
 		}
-		corrections = append(corrections, RecipientCorrection{Recipient: *input.Recipient, Scope: *input.RecipientScope})
+		corrections = append(corrections, RecipientCorrection{Recipient: *input.Recipient, Scope: *input.RecipientScope, Addresses: input.RecipientAddresses, PostalAddress: input.RecipientPostalAddress})
 	}
-	finalPath, err := p.ApproveJob(r.Context(), r.PathValue("jobID"), input.Folder, input.Filename, input.DocumentType, input.PhysicalOriginalAction, input.ArchiveMode, corrections...)
+	finalPath, err := p.ApproveJob(r.Context(), r.PathValue("jobID"), input.Folder, input.Filename, input.PhysicalOriginalAction, input.ArchiveMode, corrections...)
 	if err != nil {
 		writeAPIError(w, err, http.StatusBadRequest)
 		return
@@ -827,18 +830,4 @@ func isSafeID(value string) bool {
 		}
 	}
 	return true
-}
-
-func (p *Processor) handleJobLayoutAPI(w http.ResponseWriter, r *http.Request) {
-	job, err := p.store.Queries.GetJob(r.Context(), r.PathValue("jobID"))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	layout, err := ocr.ReadTextLayout(filepath.Join(p.cfg.Paths.Processing, job.ID), job.TextPath, int(job.PageCount))
-	if err != nil {
-		writeAPIError(w, errors.New("document text is not available"), http.StatusNotFound)
-		return
-	}
-	writeJSON(w, http.StatusOK, layout)
 }

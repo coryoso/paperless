@@ -1,10 +1,11 @@
+import type { PageChoice } from "./PageSelection";
 import type {
   Dashboard,
   SimilarityResult,
   OCRPage,
   RecipientProfile,
-  TextLayout,
 } from "./types";
+import type { BlockDocument, PostalAddress } from "./ocr-clusters";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -22,6 +23,42 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  pageSelection: (jobID: string, signal: AbortSignal) =>
+    request<{ pages: PageChoice[] }>(
+      `/api/jobs/${encodeURIComponent(jobID)}/page-selection`,
+      { signal },
+    ),
+  savePageSelection: (jobID: string, included: number[]) =>
+    request<{ pages: PageChoice[] }>(
+      `/api/jobs/${encodeURIComponent(jobID)}/page-selection`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ included }),
+      },
+    ),
+  documentBlocks: (jobID: string, signal: AbortSignal) =>
+    request<BlockDocument>(`/api/jobs/${encodeURIComponent(jobID)}/blocks`, {
+      signal,
+    }),
+  classifyBlocks: (
+    jobID: string,
+    multiplier: number,
+    sourceHash: string,
+    signal: AbortSignal,
+  ) =>
+    request<BlockDocument>(
+      `/api/jobs/${encodeURIComponent(jobID)}/classify-blocks`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          distance_multiplier: multiplier,
+          source_hash: sourceHash,
+        }),
+        signal,
+      },
+    ),
   similar: (jobID: string, signal?: AbortSignal) =>
     request<SimilarityResult>(
       `/api/jobs/${encodeURIComponent(jobID)}/similar`,
@@ -80,7 +117,6 @@ export const api = {
     request<Dashboard>("/api/dashboard", { cache: "no-store", signal }),
   pages: (jobID: string) =>
     request<{ pages: OCRPage[] }>(`/api/jobs/${jobID}/pages`),
-  layout: (jobID: string) => request<TextLayout>(`/api/jobs/${jobID}/layout`),
   text: async (jobID: string) => {
     const response = await fetch(`/files/${jobID}/text`);
     if (!response.ok) throw new Error(await response.text());
@@ -100,12 +136,13 @@ export const api = {
     data: {
       folder: string;
       filename: string;
-      document_type: string;
       physical_original_action?: string;
       archive_mode?: "replace" | "keep_both";
       recipient_profile_id?: number;
       recipient?: string;
       recipient_scope?: string;
+      recipient_addresses?: string[];
+      recipient_postal_address?: PostalAddress;
     },
   ) =>
     request<{ final_path: string }>(`/api/jobs/${jobID}/approve`, {

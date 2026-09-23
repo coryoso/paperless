@@ -6,16 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"paperless/internal/config"
 	"paperless/internal/db"
 	"paperless/internal/db/sqlc"
+	"paperless/internal/document"
 	"paperless/internal/embeddings"
-	"paperless/internal/ocr"
 )
 
 type similarityState struct {
@@ -90,7 +88,7 @@ documents:
 		if job.Status != StatusNeedsReview && !(job.Status == StatusArchived && job.ManualOverride != 0) {
 			continue
 		}
-		markdown, err := p.similarityMarkdown(job)
+		blocks, err := p.similarityBlocks(ctx, job)
 		if err != nil {
 			failures[job.ID] = err.Error()
 			if err = p.store.DeleteEmbedding(ctx, job.ID); err != nil {
@@ -99,7 +97,7 @@ documents:
 			}
 			continue
 		}
-		hash := embeddings.Hash(markdown)
+		hash := documentSignature(blocks)
 		current, err := p.store.EmbeddingCurrent(ctx, job.ID, hash, model)
 		if err != nil {
 			fail(err)
@@ -111,7 +109,7 @@ documents:
 				fail(err)
 				return
 			}
-			chunks, err := embeddings.Chunks(markdown)
+			chunks, blockIDs, err := embeddings.UnifiedChunks(blocks)
 			if err != nil {
 				failures[job.ID] = err.Error()
 				continue
@@ -139,19 +137,17 @@ documents:
 				fail(errors.New("The embedding model changed. The index will rebuild on the next pass."))
 				return
 			}
-			// OCR may have changed, or the user may have deleted this job during inference.
-			fresh, err := p.store.Queries.GetJob(ctx, job.ID)
+
+			// Hold the same short lock used by saved JSON changes through index commit.
+			p.blocksMu.Lock()
+			fresh, err := p.store.DocumentBlocks(ctx, job.ID)
+			if err != nil || documentSignature(fresh) != hash {
+				p.blocksMu.Unlock()
+				continue
+			}
+			err = p.store.SaveDocumentEmbedding(ctx, job.ID, hash, model, chunks, vectors, blockIDs)
+			p.blocksMu.Unlock()
 			if err != nil {
-				continue
-			}
-			freshMarkdown, err := p.similarityMarkdown(fresh)
-			if err != nil || freshMarkdown != markdown {
-				continue
-			}
-			if err = p.store.SaveEmbedding(ctx, job.ID, hash, model, chunks, vectors); err != nil {
-				if _, lookupErr := p.store.Queries.GetJob(ctx, job.ID); lookupErr != nil {
-					continue
-				}
 				fail(err)
 				return
 			}
@@ -166,26 +162,15 @@ documents:
 	p.setSimilarity(state)
 }
 
-func (p *Processor) similarityMarkdown(job sqlc.Job) (string, error) {
-	if !isSafeID(job.ID) {
-		return "", errors.New("invalid document identifier")
+func (p *Processor) similarityBlocks(ctx context.Context, job sqlc.Job) (document.Document, error) {
+	blocks, err := p.documentBlocks(ctx, job)
+	if err != nil {
+		return blocks, errors.New("Document JSON is not available for similarity search.")
 	}
-	data, err := os.ReadFile(filepath.Join(p.cfg.Paths.Processing, job.ID, "document.md"))
-	if errors.Is(err, os.ErrNotExist) {
-		// Older archives can reconstruct Markdown from OCR text and word geometry.
-		layout, layoutErr := ocr.ReadTextLayout(filepath.Join(p.cfg.Paths.Processing, job.ID), job.TextPath, int(job.PageCount))
-		if layoutErr != nil {
-			return "", errors.New("Document text is not available for similarity search.")
-		}
-		data = []byte(layout.Markdown)
-	} else if err != nil {
-		return "", errors.New("Document text is not available for similarity search.")
+	if len(blocks.Blocks) == 0 {
+		return blocks, errors.New("Document text is empty.")
 	}
-	text := strings.TrimSpace(string(data))
-	if text == "" {
-		return "", errors.New("Document text is empty.")
-	}
-	return text, nil
+	return blocks, nil
 }
 
 func (p *Processor) handleSimilarDocumentsAPI(w http.ResponseWriter, r *http.Request) {
@@ -218,14 +203,14 @@ func (p *Processor) handleSimilarDocumentsAPI(w http.ResponseWriter, r *http.Req
 		writeJSON(w, 200, response)
 		return
 	}
-	markdown, err := p.similarityMarkdown(job)
+	blocks, err := p.similarityBlocks(r.Context(), job)
 	if err != nil {
 		response.Status = "no_text"
 		response.Message = err.Error()
 		writeJSON(w, 200, response)
 		return
 	}
-	current, err := p.store.EmbeddingCurrent(r.Context(), job.ID, embeddings.Hash(markdown), state.ModelKey)
+	current, err := p.store.EmbeddingCurrent(r.Context(), job.ID, documentSignature(blocks), state.ModelKey)
 	if err != nil {
 		writeAPIError(w, err, 500)
 		return

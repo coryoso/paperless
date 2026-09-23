@@ -25,7 +25,7 @@ func TestSemanticSearchApprovalIsolationAndLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		if approved {
-			if err := store.LearnApproval(ctx, Approval{JobID: id, Recipient: "Alex", RecipientScope: "personal", Folder: "Insurance", Filename: id + ".pdf", DocumentType: "contract"}); err != nil {
+			if err := store.LearnApproval(ctx, Approval{JobID: id, Recipient: "Alex", RecipientScope: "personal", Folder: "Insurance", Filename: id + ".pdf"}); err != nil {
 				t.Fatal(err)
 			}
 		}

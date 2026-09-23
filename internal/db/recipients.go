@@ -51,7 +51,7 @@ func (s *Store) SaveRecipientProfile(ctx context.Context, p config.RecipientProf
 	if err != nil {
 		return err
 	}
-	p.Addresses, err = normalizeAddresses(p.Addresses)
+	p.Addresses, err = normalizeProfileAddresses(p.Addresses)
 	if err != nil {
 		return err
 	}
@@ -132,4 +132,28 @@ func (s *Store) SaveRecipientAddresses(ctx context.Context, addresses []string) 
 		}
 	}
 	return tx.Commit()
+}
+
+// Profile storage preserves user-confirmed partial/international addresses.
+// Routing still requires ValidRecipientAddress before matching a delivery place.
+func normalizeProfileAddresses(addresses []string) ([]string, error) {
+	if len(addresses) > 30 {
+		return nil, errors.New("save at most 30 addresses")
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, value := range addresses {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if len(value) > 2000 {
+			return nil, errors.New("recipient address is too long")
+		}
+		if !seen[value] {
+			out = append(out, value)
+			seen[value] = true
+		}
+	}
+	return out, nil
 }

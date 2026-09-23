@@ -246,7 +246,7 @@ func TestFinalPathStaysInsideArchiveRoot(t *testing.T) {
 	}
 }
 
-func TestApprovePersistsCorrectedDocumentType(t *testing.T) {
+func TestApproveArchivesWithoutDocumentType(t *testing.T) {
 	base := t.TempDir()
 	cfg := testServerConfig(base)
 	processor, cleanup, err := newProcessor(t.Context(), cfg)
@@ -267,7 +267,7 @@ func TestApprovePersistsCorrectedDocumentType(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	classificationJSON, _ := json.Marshal(classify.Classification{DocumentType: "tax-letter", Sender: "total-tankstelle"})
+	classificationJSON, _ := json.Marshal(classify.Classification{Sender: "total-tankstelle"})
 	if err := processor.store.Queries.SetClassified(t.Context(), sqlc.SetClassifiedParams{
 		ClassificationJson: string(classificationJSON), Confidence: .8, Summary: "Fuel receipt",
 		PhysicalOriginalAction: "keep_original", Status: StatusNeedsReview, UpdatedAt: now, ID: jobID,
@@ -275,7 +275,7 @@ func TestApprovePersistsCorrectedDocumentType(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	finalPath, err := processor.ApproveJob(t.Context(), jobID, "Belege", "2025-06-07__total-tankstelle__receipt.pdf", "receipt", "discard_candidate", "")
+	finalPath, err := processor.ApproveJob(t.Context(), jobID, "Belege", "2025-06-07__total-tankstelle__receipt.pdf", "discard_candidate", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,9 +286,6 @@ func TestApprovePersistsCorrectedDocumentType(t *testing.T) {
 	var corrected classify.Classification
 	if err := json.Unmarshal([]byte(job.ClassificationJson), &corrected); err != nil {
 		t.Fatal(err)
-	}
-	if corrected.DocumentType != "receipt" || corrected.SuggestedFolder != "Belege" || job.Status != StatusArchived {
-		t.Fatalf("job = %#v, classification = %#v", job, corrected)
 	}
 	if finalPath != job.FinalPath {
 		t.Fatalf("final path = %q, stored = %q", finalPath, job.FinalPath)

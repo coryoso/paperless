@@ -265,6 +265,7 @@ svg {
 }
 .file-picker,
 .primary-button,
+.secondary-button,
 .danger-button,
 .icon-text-button {
   display: inline-flex;
@@ -907,8 +908,85 @@ button:disabled {
   border: 1px solid var(--orange);
   background: rgba(234, 101, 63, 0.16);
 }
+.cluster-toolbar {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.cluster-controls {
+  width: 100%;
+}
+.text-view-toolbar .segmented {
+  flex-wrap: wrap;
+}
+.cluster-distance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.cluster-distance input {
+  width: 160px;
+  accent-color: var(--orange);
+}
+.cluster-distance output {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.cluster-distance button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: var(--white);
+  cursor: pointer;
+}
+.box-layer .cluster-box {
+  border-width: 2px;
+  border-color: #176d9b;
+  background: rgba(23, 109, 155, 0.1);
+}
+.cluster-number {
+  white-space: nowrap;
+  transform: translateY(-100%);
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 1px 4px;
+  background: #176d9b;
+  color: white;
+  font:
+    10px / 1.2 ui-monospace,
+    monospace;
+}
 .inline-error {
   margin: 0 24px 18px;
+}
+.cluster-classification {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.cluster-error {
+  color: var(--red);
+  font-size: 12px;
+}
+.cluster-box[data-block-type="recipient"] {
+  border-color: #287544;
+}
+.cluster-box[data-block-type="recipient"] .cluster-number {
+  background: #287544;
+}
+.cluster-box[data-block-type="sender"] {
+  border-color: #7847a3;
+}
+.cluster-box[data-block-type="sender"] .cluster-number {
+  background: #7847a3;
 }
 
 .queue-row-progress {
@@ -2226,13 +2304,13 @@ button:focus-visible {
   border-right: 0;
 }
 .review-detail .fact:nth-child(-n + 2) {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0;
 }
 .review-detail .fact {
   padding: 12px 16px;
 }
 .review-detail .fact strong {
-  white-space: normal;
+  white-space: pre-line;
   overflow-wrap: anywhere;
 }
 .review-detail .routing-form {
@@ -2332,4 +2410,199 @@ button:focus-visible {
   .review-detail .routing-form {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+.reading-block p,
+.reading-block h3,
+.unified-entry p,
+.unified-text section p {
+  white-space: pre-wrap;
+}
+.unified-text section {
+  margin-top: 1.5rem;
+}
+.unified-text small {
+  color: var(--muted);
+}
+.unified-entry {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Scroll panes reach the viewport edge; spacing scrolls with their content. */
+.workspace-shell .main {
+  padding-block: 0;
+}
+.workspace-shell .detail-column,
+.workspace-shell .queue-column {
+  padding-top: 20px;
+  scroll-padding-block: 20px;
+}
+.workspace-shell .document-detail {
+  margin-bottom: 20px;
+}
+.identity-facts {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.fact strong {
+  white-space: pre-line;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.detail-head > div:first-child {
+  min-width: 0;
+}
+.current-filename,
+.original-filename p {
+  overflow-wrap: anywhere;
+}
+.original-filename {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.original-filename summary {
+  cursor: pointer;
+}
+.original-filename p {
+  margin-top: 6px;
+}
+.text-view-toolbar {
+  margin-bottom: 18px;
+}
+.metadata-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+.metadata-table th,
+.metadata-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.metadata-table th {
+  width: 30%;
+  color: var(--muted);
+  font-weight: 500;
+}
+.structured-fields {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.structured-fields h3 {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--warm);
+  font-size: 14px;
+}
+.recipient-address-input {
+  grid-column: 1 / -1;
+}
+@media (max-width: 620px) {
+  .workspace-shell .detail-column,
+  .workspace-shell .queue-column {
+    padding-top: 12px;
+  }
+}
+
+.identity-facts {
+  border-bottom: 0;
+}
+.identity-facts .fact:nth-child(-n + 2) {
+  border-bottom: 0;
+}
+.identity-facts .fact:nth-child(n + 3) {
+  border-top: 1px solid var(--line);
+}
+.identity-facts .fact:nth-child(2n) {
+  border-right: 0;
+}
+.recipient-address-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(70px, 1fr) minmax(0, 1.5fr);
+  gap: 10px;
+}
+.recipient-address-row input {
+  min-width: 0;
+  width: 100%;
+}
+.postal-components {
+  margin: 0;
+}
+.postal-components > div {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) 2fr;
+  gap: 10px;
+}
+.postal-components dt {
+  color: var(--muted);
+}
+.postal-components dd {
+  margin: 0;
+}
+.metadata-table details {
+  margin-top: 8px;
+  color: var(--muted);
+}
+.consolidated-field > summary {
+  padding: 14px 16px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.page-selection {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  background: var(--orange-soft);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.page-selection summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.page-selection p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.page-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.page-choices label,
+.full-pdf-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.full-pdf-toggle {
+  margin-top: 14px;
+}
+.recipient-review {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.recipient-review > label:not(.filename-field),
+.recipient-address-row > label {
+  grid-column: auto;
+  min-width: 0;
+}
+.recipient-review > label.filename-field {
+  grid-column: 1 / -1;
+}
+.recipient-review input,
+.recipient-review select {
+  min-width: 0;
+}
+.structured-fields > .text-layout-note {
+  margin: 14px 16px;
 }

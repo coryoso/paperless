@@ -70,12 +70,23 @@ func (p *Processor) retryJob(ctx context.Context, jobID string) (string, error) 
 	}
 	// Clear generated OCR artifacts so pages from an earlier attempt cannot leak
 	// into the new preview. The raw original and existing archive file are kept.
-	if err := os.RemoveAll(filepath.Join(p.cfg.Paths.Processing, job.ID)); err != nil {
+
+	if err := func() error {
+		p.blocksMu.Lock()
+		defer p.blocksMu.Unlock()
+		p.pagesMu.Lock()
+		defer p.pagesMu.Unlock()
+		if err := os.RemoveAll(filepath.Join(p.cfg.Paths.Processing, job.ID)); err != nil {
+			return err
+		}
+		if _, err := p.store.Conn().ExecContext(ctx, "DELETE FROM document_pages WHERE job_id=?", job.ID); err != nil {
+			return err
+		}
+		return p.store.ResetJobForReprocessing(ctx, job.ID, inputPath)
+	}(); err != nil {
 		return "", err
 	}
-	if err := p.store.ResetJobForReprocessing(ctx, job.ID, inputPath); err != nil {
-		return "", err
-	}
+
 	p.notifyDashboard()
 	scanTime, err := time.Parse(time.RFC3339, job.ScanTimestamp)
 	if err != nil {

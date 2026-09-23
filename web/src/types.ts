@@ -1,5 +1,8 @@
 export type Classification = {
-  document_type: string;
+  metadata?: import("./ocr-clusters").DocumentMetadata;
+  subject?: string;
+  sender_display?: string;
+  recipient_display?: string;
   sender: string;
   recipient: string;
   detected_recipient?: string;
@@ -54,7 +57,6 @@ export type SimilarityResult = {
     folder: string;
     recipient: string;
     recipient_scope: string;
-    document_type: string;
     excerpt: string;
     query_excerpt: string;
   }[];
@@ -67,7 +69,6 @@ export type Dashboard = {
     indexed: number;
     skipped: number;
   };
-  paper_recommendations?: Record<string, string>;
   database_backup?: {
     directory: string;
     latest: string;
@@ -146,16 +147,4 @@ export type OCRPage = {
     confidence: number;
     text: string;
   }[];
-};
-
-export type TextBlock = {
-  kind: "heading" | "paragraph" | "pre" | "table" | "columns";
-  text?: string;
-  rows?: string[][];
-  columns?: TextBlock[][];
-};
-export type TextLayout = {
-  pages: { page: number; blocks: TextBlock[] }[];
-  text: string;
-  markdown: string;
 };

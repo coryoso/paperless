@@ -48,10 +48,10 @@ func TestFMClassificationAndPolicyMerge(t *testing.T) {
 	text := "Finanzamt\nHerrn Alex Example\n25.02.2026\nEinkommensteuerbescheid"
 	var events []progress.Event
 	result := ClassifyWithHistory(t.Context(), cfg, text, "scan.pdf", time.Now(), []string{"Tax/2026"}, nil, func(event progress.Event) { events = append(events, event) }, "# Letter\n"+text)
-	if result.Source != "fm" || result.DocumentType != "tax-letter" || result.PhysicalOriginalAction != "keep_original" || result.RecipientScope != "personal" || result.SuggestedFolder != "Tax/2026" {
-		t.Fatalf("classification = %+v", result)
+	if result.Source != "fm" || result.PhysicalOriginalAction != "review" || result.RecipientScope != "personal" || result.SuggestedFolder != "Tax/2026" {
+		t.Fatal(result)
 	}
-	if !strings.HasPrefix(result.SuggestedFilename, "2026-02-25__finanzamt__tax-letter") {
+	if !strings.HasPrefix(result.SuggestedFilename, "2026-02-25__finanzamt__document.pdf") {
 		t.Fatalf("filename = %s", result.SuggestedFilename)
 	}
 	prompt, _ := os.ReadFile(promptFile)
@@ -113,8 +113,8 @@ func TestFMIntegration(t *testing.T) {
 	cfg := config.Default()
 	cfg.LLM.Provider = "fm"
 	result := Classify(t.Context(), cfg, "REWE Markt\nKassenbon\n18.09.2026\nGesamt EUR 12,34\nMwSt 7%", "receipt.pdf", time.Now(), []string{"Belege"})
-	if result.Source != "fm" || result.DocumentType != "receipt" || result.SuggestedFolder != "Belege" {
-		t.Fatalf("real fm classification = %+v", result)
+	if result.Source != "fm" || result.SuggestedFolder != "Belege" {
+		t.Fatal(result)
 	}
-	t.Logf("fm classified synthetic receipt: %s, %s", result.DocumentType, result.SuggestedFilename)
+	t.Logf("fm classified synthetic receipt: %s, %s", result.Source, result.SuggestedFilename)
 }

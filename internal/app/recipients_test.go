@@ -71,7 +71,7 @@ func TestReviewApprovalTeachesRecipientScopedRoutingAfterRestart(t *testing.T) {
 	if c.SuggestedFolder != "Misc/Alpha" {
 		t.Fatalf("learned destination omitted after restart: %+v", c)
 	}
-	if _, err := p.ApproveJob(t.Context(), id, "Misc/Alpha", "invoice.pdf", "routine-invoice", "keep_original", ""); err == nil {
+	if _, err := p.ApproveJob(t.Context(), id, "Misc/Alpha", "invoice.pdf", "keep_original", ""); err == nil {
 		t.Fatal("a second approval must not count as another learning example")
 	}
 }
@@ -148,7 +148,7 @@ func TestSavedRecipientOverrideLearnsAliasOnlyAfterSuccessfulApproval(t *testing
 		t.Fatal(err)
 	}
 	defer cleanup()
-	if err := p.store.SaveRecipientProfile(t.Context(), config.RecipientProfile{Name: "Alex Example", Scope: "personal"}); err != nil {
+	if err := p.store.SaveRecipientProfile(t.Context(), config.RecipientProfile{Name: "Alex Example", Scope: "personal", Addresses: []string{"Example Road 1\n12345 Berlin"}}); err != nil {
 		t.Fatal(err)
 	}
 	profiles, _ := p.store.RecipientProfiles(t.Context())
@@ -157,7 +157,7 @@ func TestSavedRecipientOverrideLearnsAliasOnlyAfterSuccessfulApproval(t *testing
 	os.WriteFile(file, []byte("document"), 0600)
 	now := db.Now()
 	p.store.Queries.CreateJob(t.Context(), sqlc.CreateJobParams{ID: "alias-review", SourceFilename: "alias.pdf", CurrentPath: file, Status: StatusNeedsReview, ScanTimestamp: now, UpdatedAt: now})
-	original, _ := json.Marshal(classify.Classification{Recipient: "alex-examp1e", RecipientScope: "personal", DocumentType: "receipt"})
+	original, _ := json.Marshal(classify.Classification{Recipient: "alex-examp1e", RecipientScope: "personal"})
 	p.store.Queries.SetClassified(t.Context(), sqlc.SetClassifiedParams{ID: "alias-review", ClassificationJson: string(original), Status: StatusNeedsReview, UpdatedAt: now})
 	for _, body := range []string{
 		fmt.Sprintf(`{"folder":"Example GbR","filename":"letter.pdf","document_type":"contract","recipient_profile_id":%d}`, id),
@@ -195,8 +195,11 @@ func TestSavedRecipientOverrideLearnsAliasOnlyAfterSuccessfulApproval(t *testing
 	job, _ := p.store.Queries.GetJob(t.Context(), "alias-review")
 	var c classify.Classification
 	json.Unmarshal([]byte(job.ClassificationJson), &c)
-	if c.Recipient != "alex-example" || c.RecipientProfileID != id || c.DetectedRecipient != "alex-examp1e" || job.PhysicalOriginalAction != "keep_original" {
+	if c.Recipient != "alex-example" || c.RecipientProfileID != id || c.DetectedRecipient != "alex-examp1e" || job.PhysicalOriginalAction != "review" {
 		t.Fatalf("saved identity or recommendation wrong: %+v", c)
+	}
+	if c.Metadata == nil || c.Metadata.Recipient.ProfileID != id || c.Metadata.Recipient.Names[0] != "Alex Example" || len(c.Metadata.Recipient.Addresses) != 1 || c.Metadata.Recipient.Addresses[0].Lines[1] != "12345 Berlin" {
+		t.Fatalf("selected profile missing from structured fields: %+v", c.Metadata)
 	}
 	cfg.LLM.Enabled = false
 	cfg.RecipientProfiles = profiles
@@ -206,7 +209,7 @@ func TestSavedRecipientOverrideLearnsAliasOnlyAfterSuccessfulApproval(t *testing
 	}
 }
 
-func TestJobLayoutIncludesExistingOCRAndMissingTextReturns404(t *testing.T) {
+func TestJobBlocksIncludeExistingOCRWithoutMarkdown(t *testing.T) {
 	cfg := testServerConfig(t.TempDir())
 	p, cleanup, err := newProcessor(t.Context(), cfg)
 	if err != nil {
@@ -218,8 +221,8 @@ func TestJobLayoutIncludesExistingOCRAndMissingTextReturns404(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/layout", nil)
 	request.SetPathValue("jobID", "layout-job")
 	response := httptest.NewRecorder()
-	p.handleJobLayoutAPI(response, request)
-	if response.Code != 404 {
+	p.handleDocumentBlocksAPI(response, request)
+	if response.Code != 500 {
 		t.Fatalf("missing text: %d", response.Code)
 	}
 	work := filepath.Join(cfg.Paths.Processing, "layout-job")
@@ -232,8 +235,8 @@ func TestJobLayoutIncludesExistingOCRAndMissingTextReturns404(t *testing.T) {
 		t.Fatal(err)
 	}
 	response = httptest.NewRecorder()
-	p.handleJobLayoutAPI(response, request)
-	if response.Code != 200 || !strings.Contains(response.Body.String(), "Recognized words") || !strings.Contains(response.Body.String(), `"markdown"`) {
+	p.handleDocumentBlocksAPI(response, request)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "Recognized words") || strings.Contains(response.Body.String(), `"markdown"`) {
 		t.Fatalf("layout response: %s", response.Body.String())
 	}
 	raw, err := os.ReadFile(path)

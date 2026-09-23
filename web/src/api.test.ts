@@ -4,6 +4,29 @@ import type { Dashboard } from "./types";
 
 afterEach(() => mock.restore());
 
+it("classifies saved OCR with a multiplier and source revision, without client text or geometry", async () => {
+  const controller = new AbortController();
+  globalThis.fetch = mock(() =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          version: 1,
+          source_hash: "source",
+          distance_multiplier: 1.5,
+          blocks: [],
+        }),
+      ),
+    ),
+  ) as unknown as typeof fetch;
+  await api.classifyBlocks("test/id", 1.5, "source", controller.signal);
+  expect(fetch).toHaveBeenCalledWith("/api/jobs/test%2Fid/classify-blocks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: controller.signal,
+    body: JSON.stringify({ distance_multiplier: 1.5, source_hash: "source" }),
+  });
+});
+
 it("shows a readable setup error when the selected model is unavailable", async () => {
   globalThis.fetch = mock(() =>
     Promise.resolve(
@@ -97,7 +120,6 @@ describe("dashboard API", () => {
     await api.approve("job-12345678", {
       folder: "Tax/2026",
       filename: "2026-02-25__finanzamt__tax-letter.pdf",
-      document_type: "tax-letter",
       physical_original_action: "keep_original",
     });
 
@@ -108,7 +130,6 @@ describe("dashboard API", () => {
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toMatchObject({
       folder: "Tax/2026",
-      document_type: "tax-letter",
     });
   });
 });

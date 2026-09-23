@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"paperless/internal/config"
+	"paperless/internal/document"
 )
 
 type Client struct{ Config config.Embeddings }
@@ -89,7 +90,7 @@ func (c Client) Identity(ctx context.Context) (string, error) {
 	}
 	for _, model := range response.Models {
 		if (model.Name == name || model.Name == c.Config.Model) && model.Digest != "" {
-			return Hash("markdown-v1\n" + c.Config.Endpoint + "\n" + name + "\n" + model.Digest), nil
+			return Hash("unified-document-v1\n" + c.Config.Endpoint + "\n" + name + "\n" + model.Digest), nil
 		}
 	}
 	return "", fmt.Errorf("embedding model %q is missing; run ollama pull %s", c.Config.Model, c.Config.Model)
@@ -165,4 +166,52 @@ func Chunks(markdown string) ([]string, error) {
 		return nil, errors.New("document has too many sections for similarity indexing")
 	}
 	return chunks, nil
+}
+
+// DocumentChunks retains the representative block IDs for legacy callers.
+func DocumentChunks(doc document.Document) ([]string, []int, error) {
+	chunks, sources, err := UnifiedChunks(doc)
+	ids := make([]int, len(sources))
+	for i, s := range sources {
+		ids[i] = s[0]
+	}
+	return chunks, ids, err
+}
+
+// UnifiedChunks embeds the persisted deduplicated entries, with full provenance.
+// JSON keys and geometry never enter the embedding text.
+func UnifiedChunks(doc document.Document) ([]string, [][]int, error) {
+	unified := doc.Unified
+	if unified == nil {
+		unified = document.Consolidate(doc.Blocks)
+	}
+	chunks := []string{}
+	sources := [][]int{}
+	bytes := 0
+	for _, group := range unified.Groups {
+		for _, entry := range group.Entries {
+			if strings.TrimSpace(entry.Content) == "" || len(entry.SourceIDs) == 0 {
+				continue
+			}
+			bytes += len(entry.Content)
+			if bytes > 2<<20 {
+				return nil, nil, errors.New("document text is too large for similarity indexing")
+			}
+			parts, err := Chunks(entry.Content)
+			if err != nil {
+				return nil, nil, err
+			}
+			chunks = append(chunks, parts...)
+			for range parts {
+				sources = append(sources, entry.SourceIDs)
+			}
+			if len(chunks) > 256 {
+				return nil, nil, errors.New("document has too many sections for similarity indexing")
+			}
+		}
+	}
+	if len(chunks) == 0 {
+		return nil, nil, errors.New("document text is empty")
+	}
+	return chunks, sources, nil
 }

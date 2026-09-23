@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"math"
 	"sort"
@@ -15,7 +16,6 @@ type EmbeddingMatch struct {
 	Folder         string  `json:"folder"`
 	Recipient      string  `json:"recipient"`
 	RecipientScope string  `json:"recipient_scope"`
-	DocumentType   string  `json:"document_type"`
 	Excerpt        string  `json:"excerpt"`
 	QueryExcerpt   string  `json:"query_excerpt"`
 	Distance       float64 `json:"-"`
@@ -28,13 +28,35 @@ func (s *Store) EmbeddingCurrent(ctx context.Context, jobID, hash, model string)
 }
 
 func (s *Store) DeleteEmbedding(ctx context.Context, jobID string) error {
-	_, err := s.conn.ExecContext(ctx, `DELETE FROM document_embeddings WHERE job_id=?`, jobID)
-	return err
+	tx, err := s.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM embedding_chunks WHERE job_id=?`, jobID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM document_embeddings WHERE job_id=?`, jobID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (s *Store) SaveEmbedding(ctx context.Context, jobID, hash, model string, chunks []string, vectors [][]float32) error {
+func (s *Store) SaveEmbedding(ctx context.Context, jobID, hash, model string, chunks []string, vectors [][]float32, blockIDs ...[]int) error {
+	var sources [][]int
+	if len(blockIDs) > 0 {
+		for _, id := range blockIDs[0] {
+			sources = append(sources, []int{id})
+		}
+	}
+	return s.SaveDocumentEmbedding(ctx, jobID, hash, model, chunks, vectors, sources)
+}
+func (s *Store) SaveDocumentEmbedding(ctx context.Context, jobID, hash, model string, chunks []string, vectors [][]float32, sources [][]int) error {
 	if len(chunks) == 0 || len(chunks) != len(vectors) || len(vectors[0]) == 0 || len(vectors[0]) > 4096 {
 		return errors.New("invalid document embeddings")
+	}
+	if sources != nil && len(sources) != len(chunks) {
+		return errors.New("invalid embedding block references")
 	}
 	dimension := len(vectors[0])
 	normalized := make([][]float32, len(vectors))
@@ -62,6 +84,9 @@ func (s *Store) SaveEmbedding(ctx context.Context, jobID, hash, model string, ch
 		return err
 	}
 	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM embedding_chunks WHERE job_id=?`, jobID); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM document_embeddings WHERE job_id=?`, jobID); err != nil {
 		return err
 	}
@@ -70,7 +95,14 @@ func (s *Store) SaveEmbedding(ctx context.Context, jobID, hash, model string, ch
 	}
 	for i, vector := range normalized {
 		data := encodeVector(vector)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO embedding_chunks(job_id,ordinal,excerpt,vector) VALUES(?,?,?,?)`, jobID, i, chunks[i], data); err != nil {
+		var blockID any
+		sourceJSON := "[]"
+		if sources != nil && len(sources[i]) > 0 {
+			blockID = sources[i][0]
+			raw, _ := json.Marshal(sources[i])
+			sourceJSON = string(raw)
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO embedding_chunks(job_id,ordinal,excerpt,vector,block_id,source_block_ids) VALUES(?,?,?,?,?,?)`, jobID, i, chunks[i], data, blockID, sourceJSON); err != nil {
 			return err
 		}
 	}
@@ -106,7 +138,7 @@ func (s *Store) SimilarDocuments(ctx context.Context, jobID, model string) ([]Em
  WHERE source.job_id=? AND source.model_key=? AND target.centroid IS NOT NULL
  AND EXISTS (SELECT 1 FROM routing_examples WHERE source_job_id=target.job_id)
  ORDER BY vec_distance_cosine(source.centroid,target.centroid),target.job_id LIMIT ?
- ) SELECT c.job_id,r.filename,r.folder,r.recipient,r.recipient_scope,r.document_type,c.excerpt,c.vector
+ ) SELECT c.job_id,r.filename,r.folder,r.recipient,r.recipient_scope,c.excerpt,c.vector
  FROM candidates candidate
  JOIN embedding_chunks c ON c.job_id=candidate.job_id
  JOIN routing_examples r ON r.id=(SELECT MAX(id) FROM routing_examples WHERE source_job_id=c.job_id)
@@ -190,7 +222,7 @@ func readCandidateSections(rows *sql.Rows) ([]candidateSection, error) {
 		var section candidateSection
 		var data []byte
 		m := &section.match
-		if err := rows.Scan(&m.JobID, &m.Filename, &m.Folder, &m.Recipient, &m.RecipientScope, &m.DocumentType, &m.Excerpt, &data); err != nil {
+		if err := rows.Scan(&m.JobID, &m.Filename, &m.Folder, &m.Recipient, &m.RecipientScope, &m.Excerpt, &data); err != nil {
 			return nil, err
 		}
 		var err error

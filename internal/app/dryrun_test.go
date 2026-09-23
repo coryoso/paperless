@@ -74,9 +74,6 @@ func TestDryRunLocalAcceptancePDF(t *testing.T) {
 	if result.Classification.DocumentDate != "2026-02-25" {
 		t.Fatalf("document date = %q", result.Classification.DocumentDate)
 	}
-	if result.Classification.DocumentType != "tax-letter" {
-		t.Fatalf("document type = %q", result.Classification.DocumentType)
-	}
 	if result.Classification.SuggestedFolder != "02 Finanzen und Steuern/Finanzamt" {
 		t.Fatalf("folder = %q", result.Classification.SuggestedFolder)
 	}
