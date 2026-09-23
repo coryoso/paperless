@@ -2219,6 +2219,15 @@ button:focus-visible {
   height: 68px;
   border-width: 5px;
 }
+.review-detail .fact-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.review-detail .fact:nth-child(2) {
+  border-right: 0;
+}
+.review-detail .fact:nth-child(-n + 2) {
+  border-bottom: 1px solid var(--line);
+}
 .review-detail .fact {
   padding: 12px 16px;
 }
@@ -2290,19 +2299,13 @@ button:focus-visible {
 /* Keep the scan and routing choices visible together on desktop. */
 @media (min-width: 1280px) {
   .review-detail {
-    display: flex;
-    flex-direction: column;
     height: 100%;
   }
   .review-body {
     display: grid;
     grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.1fr);
-    flex: 1;
+    height: 100%;
     min-height: 0;
-  }
-  .review-detail > .detail-head,
-  .review-detail > .fact-row {
-    flex: none;
   }
   .review-controls,
   .review-body > .preview-section {
@@ -2311,11 +2314,17 @@ button:focus-visible {
     scrollbar-gutter: stable;
   }
   .review-body > .preview-section {
+    display: flex;
+    flex-direction: column;
     border-left: 1px solid var(--line);
+  }
+  .review-body .preview-toolbar {
+    flex: none;
   }
   .review-detail .pdf-frame,
   .review-detail .overlay-stack {
-    height: calc(100% - 58px);
+    flex: 1;
+    height: auto;
     min-height: 280px;
   }
 }

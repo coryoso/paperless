@@ -1259,10 +1259,8 @@ function JobDetail({
     }
   };
 
-  return (
-    <article
-      className={`document-detail${needsReview ? " review-detail" : ""}`}
-    >
+  const documentSummary = (
+    <>
       <header className="detail-head">
         <div>
           <span className="eyebrow">
@@ -1298,9 +1296,11 @@ function JobDetail({
         />
         <Fact
           label={
-            recipientScopes.find(
-              (scope) => scope.value === classification.recipient_scope,
-            )?.label || "Recipient"
+            needsReview
+              ? "Recipient"
+              : recipientScopes.find(
+                  (scope) => scope.value === classification.recipient_scope,
+                )?.label || "Recipient"
           }
           value={displayName(classification.recipient) || "Not detected"}
         />
@@ -1314,6 +1314,14 @@ function JobDetail({
         />
         <Fact label="Pages" value={String(job.page_count || 0)} />
       </div>
+    </>
+  );
+
+  return (
+    <article
+      className={`document-detail${needsReview ? " review-detail" : ""}`}
+    >
+      {!needsReview && documentSummary}
       {job.status === "archived" && (
         <section className="archive-location" aria-label="Archive location">
           <FolderArchive aria-hidden="true" />
@@ -1338,6 +1346,7 @@ function JobDetail({
       <div className={needsReview ? "review-body" : undefined}>
         {needsReview && (
           <div className="review-controls">
+            {documentSummary}
             <section className="routing-form">
               <div className="route-head">
                 <div>
@@ -1493,33 +1502,34 @@ function JobDetail({
                   {folder ? `/${folder}` : ""}/{filename}
                 </span>
               </div>
-          {job.final_path && (
-            <div className="archive-choice">
-              <span className="eyebrow">Previously saved file</span>
-              <p className="previous-path">{job.final_path}</p>
-              <label>
-                <span>When you approve</span>
-                <select
-                  value={archiveMode}
-                  disabled={saving}
-                  onChange={(event) =>
-                    setArchiveMode(
-                      event.target.value as "replace" | "keep_both",
-                    )
-                  }
-                >
-                  <option value="replace">Replace previous file</option>
-                  <option value="keep_both">Keep both files</option>
-                </select>
-              </label>
-              <p>
-                {archiveMode === "replace"
-                  ? "Save the reviewed version at the destination above and remove the previous file, even if its name or folder changed."
-                  : "Keep the previous file and save another copy. This document will point to the newly saved copy."}{" "}
-                If another file already uses the name, a number will be added.
-              </p>
-            </div>
-          )}
+              {job.final_path && (
+                <div className="archive-choice">
+                  <span className="eyebrow">Previously saved file</span>
+                  <p className="previous-path">{job.final_path}</p>
+                  <label>
+                    <span>When you approve</span>
+                    <select
+                      value={archiveMode}
+                      disabled={saving}
+                      onChange={(event) =>
+                        setArchiveMode(
+                          event.target.value as "replace" | "keep_both",
+                        )
+                      }
+                    >
+                      <option value="replace">Replace previous file</option>
+                      <option value="keep_both">Keep both files</option>
+                    </select>
+                  </label>
+                  <p>
+                    {archiveMode === "replace"
+                      ? "Save the reviewed version at the destination above and remove the previous file, even if its name or folder changed."
+                      : "Keep the previous file and save another copy. This document will point to the newly saved copy."}{" "}
+                    If another file already uses the name, a number will be
+                    added.
+                  </p>
+                </div>
+              )}
               <p className="learning-note">
                 Approval saves your recipient and folder choices locally to
                 guide similar documents.
