@@ -83,7 +83,6 @@ export function SimilarDocuments({ jobID }: { jobID: string }) {
                       {match.filename}
                     </a>
                     <div className="similar-meta">
-                      <span>{match.document_type.replaceAll("-", " ")}</span>
                       <span>
                         {match.recipient || "Recipient not recorded"} ·{" "}
                         {match.recipient_scope.replaceAll("_", " ")}

@@ -64,7 +64,13 @@ func (s *Store) ResetJobForReprocessing(ctx context.Context, jobID, inputPath st
  error='', duplicate_of='', manual_override=0, updated_at=? WHERE id=?`, inputPath, Now(), jobID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_chunks WHERE job_id=?`, jobID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM document_embeddings WHERE job_id=?`, jobID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM document_blocks WHERE job_id=?`, jobID); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

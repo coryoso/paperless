@@ -1,21 +1,3 @@
-export const documentTypes = [
-  "receipt",
-  "routine-invoice",
-  "payment-reminder",
-  "insurance-letter",
-  "insurance-policy",
-  "tax-letter",
-  "government-letter",
-  "bank-document",
-  "medical-document",
-  "contract",
-  "legal-letter",
-  "delivery-receipt",
-  "marketing",
-  "letter",
-  "unknown",
-] as const;
-
 export const recipientScopes = [
   { value: "personal", label: "Personal" },
   { value: "sole_proprietor", label: "Sole proprietor" },
@@ -59,19 +41,6 @@ export function usesOtherDirectory(folder: string, folders: string[]): boolean {
     folder !== "" &&
     !folders.some((known) => known === folder || known.startsWith(`${folder}/`))
   );
-}
-
-export function replaceFilenameDocumentType(
-  filename: string,
-  previous: string,
-  next: string,
-): string {
-  const token = `__${previous}__`;
-  if (filename.includes(token)) return filename.replace(token, `__${next}__`);
-  const suffix = `__${previous}.pdf`;
-  if (filename.endsWith(suffix))
-    return `${filename.slice(0, -suffix.length)}__${next}.pdf`;
-  return filename;
 }
 
 export function recipientKey(value: string): string {

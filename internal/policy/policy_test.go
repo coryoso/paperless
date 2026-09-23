@@ -29,7 +29,6 @@ func (f fakeCounter) GetFolderApprovedCount(context.Context, string) (int64, err
 func TestPolicyRequiresLearnedExamples(t *testing.T) {
 	cfg := config.Default()
 	c := classify.Classification{
-		DocumentType:           "receipt",
 		Sender:                 "rewe",
 		Recipient:              "alex-example",
 		RecipientScope:         "personal",
@@ -55,7 +54,6 @@ func TestPolicyRequiresLearnedExamples(t *testing.T) {
 func TestPolicyBlocksSensitiveDocuments(t *testing.T) {
 	cfg := config.Default()
 	c := classify.Classification{
-		DocumentType:           "tax-letter",
 		Sender:                 "finanzamt",
 		SuggestedFolder:        "Admin/Tax",
 		PhysicalOriginalAction: "keep_original",

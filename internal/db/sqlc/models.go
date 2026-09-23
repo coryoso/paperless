@@ -4,6 +4,20 @@
 
 package sqlc
 
+import (
+	"database/sql"
+)
+
+type DocumentBlock struct {
+	JobID              string  `json:"job_id"`
+	SourceHash         string  `json:"source_hash"`
+	Version            int64   `json:"version"`
+	DistanceMultiplier float64 `json:"distance_multiplier"`
+	BlocksJson         string  `json:"blocks_json"`
+	UpdatedAt          string  `json:"updated_at"`
+	UnifiedJson        string  `json:"unified_json"`
+}
+
 type DocumentEmbedding struct {
 	JobID       string `json:"job_id"`
 	ContentHash string `json:"content_hash"`
@@ -13,11 +27,21 @@ type DocumentEmbedding struct {
 	Centroid    []byte `json:"centroid"`
 }
 
+type DocumentPage struct {
+	JobID          string `json:"job_id"`
+	Page           int64  `json:"page"`
+	SuggestedBlank int64  `json:"suggested_blank"`
+	Excluded       int64  `json:"excluded"`
+	Reason         string `json:"reason"`
+}
+
 type EmbeddingChunk struct {
-	JobID   string `json:"job_id"`
-	Ordinal int64  `json:"ordinal"`
-	Excerpt string `json:"excerpt"`
-	Vector  []byte `json:"vector"`
+	JobID          string        `json:"job_id"`
+	Ordinal        int64         `json:"ordinal"`
+	Excerpt        string        `json:"excerpt"`
+	Vector         []byte        `json:"vector"`
+	BlockID        sql.NullInt64 `json:"block_id"`
+	SourceBlockIds string        `json:"source_block_ids"`
 }
 
 type Event struct {
@@ -78,7 +102,6 @@ type RoutingExample struct {
 	CreatedAt      string  `json:"created_at"`
 	SourceJobID    string  `json:"source_job_id"`
 	Sender         string  `json:"sender"`
-	DocumentType   string  `json:"document_type"`
 	Folder         string  `json:"folder"`
 	Filename       string  `json:"filename"`
 	Weight         float64 `json:"weight"`

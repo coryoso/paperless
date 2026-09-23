@@ -32,7 +32,7 @@ func (p *Processor) classifyDocument(ctx context.Context, text, filename string,
 	}
 	history := []classify.RoutingExample{}
 	for _, row := range rows {
-		history = append(history, classify.RoutingExample{Sender: row.Sender, Recipient: row.Recipient, RecipientScope: row.RecipientScope, DocumentType: row.DocumentType, Folder: row.Folder, Filename: fmt.Sprint(row.Filename), Approvals: row.Approvals})
+		history = append(history, classify.RoutingExample{Sender: row.Sender, Recipient: row.Recipient, RecipientScope: row.RecipientScope, Folder: row.Folder, Filename: fmt.Sprint(row.Filename), Approvals: row.Approvals})
 	}
 	folders = classify.RecipientFolders(cfg, text, folders)
 	candidates := classify.LearnedFolders(cfg, text, history, folders)

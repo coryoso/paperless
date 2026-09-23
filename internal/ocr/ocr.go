@@ -21,21 +21,21 @@ import (
 	"unicode"
 
 	"paperless/internal/config"
+	"paperless/internal/document"
 	"paperless/internal/progress"
 )
 
 type Result struct {
-	Layout        TextLayout   `json:"text_layout"`
-	MarkdownPath  string       `json:"markdown_path"`
-	SearchablePDF string       `json:"searchable_pdf"`
-	TextPath      string       `json:"text_path"`
-	Text          string       `json:"text"`
-	PageCount     int          `json:"page_count"`
-	TextHash      string       `json:"text_hash"`
-	InputKind     string       `json:"input_kind"`
-	TextSource    string       `json:"text_source"`
-	Pages         []PageResult `json:"pages"`
-	Warnings      []string     `json:"warnings"`
+	BlockDocument document.Document `json:"block_document"`
+	SearchablePDF string            `json:"searchable_pdf"`
+	TextPath      string            `json:"text_path"`
+	Text          string            `json:"text"`
+	PageCount     int               `json:"page_count"`
+	TextHash      string            `json:"text_hash"`
+	InputKind     string            `json:"input_kind"`
+	TextSource    string            `json:"text_source"`
+	Pages         []PageResult      `json:"pages"`
+	Warnings      []string          `json:"warnings"`
 }
 
 type PageResult struct {
@@ -204,18 +204,8 @@ func ProcessWithProgress(ctx context.Context, cfg config.Config, inputPath strin
 	if err := os.WriteFile(textPath, []byte(text+"\n"), 0o644); err != nil {
 		return Result{}, err
 	}
-	layout, err := ReadTextLayout(workDir, textPath, len(pagePDFs))
-	if err != nil {
-		return Result{}, err
-	}
-	markdownPath := filepath.Join(workDir, "document.md")
-	if err := os.WriteFile(markdownPath, []byte(layout.Markdown+"\n"), 0o644); err != nil {
-		return Result{}, err
-	}
 	reporter.Info("ocr", "complete", fmt.Sprintf("OCR complete with %d page(s).", len(pagePDFs)), len(pagePDFs), len(pagePDFs), 86)
 	return Result{
-		Layout:        layout,
-		MarkdownPath:  markdownPath,
 		SearchablePDF: outputPDF,
 		TextPath:      textPath,
 		Text:          text,
@@ -365,18 +355,8 @@ func preserveDigitalPDF(inputPath, workDir string, profile nativePDFProfile, rep
 	if err := os.WriteFile(textPath, []byte(text+"\n"), 0o644); err != nil {
 		return Result{}, err
 	}
-	layout, err := ReadTextLayout(workDir, textPath, profile.PageCount)
-	if err != nil {
-		return Result{}, err
-	}
-	markdownPath := filepath.Join(workDir, "document.md")
-	if err := os.WriteFile(markdownPath, []byte(layout.Markdown+"\n"), 0o644); err != nil {
-		return Result{}, err
-	}
 	reporter.Info("ocr", "complete", fmt.Sprintf("Embedded PDF text ready with %d page(s).", profile.PageCount), profile.PageCount, profile.PageCount, 86)
 	return Result{
-		Layout:        layout,
-		MarkdownPath:  markdownPath,
 		SearchablePDF: outputPDF,
 		TextPath:      textPath,
 		Text:          text,
@@ -1229,8 +1209,8 @@ func clampFloat(value, min, max float64) float64 {
 }
 
 func (r Result) ReadingText() string {
-	if strings.TrimSpace(r.Layout.Text) != "" {
-		return r.Layout.Text
+	if len(r.BlockDocument.Blocks) > 0 {
+		return r.BlockDocument.Text()
 	}
 	return r.Text
 }

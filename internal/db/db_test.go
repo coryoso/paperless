@@ -68,7 +68,6 @@ func TestLearnApproval(t *testing.T) {
 		Sender:         "rewe",
 		Recipient:      "alex-example",
 		RecipientScope: "personal",
-		DocumentType:   "receipt",
 		Folder:         "Receipts/Groceries",
 		Filename:       "2026-07-26__rewe__receipt__groceries.pdf",
 	}); err != nil {
@@ -78,7 +77,6 @@ func TestLearnApproval(t *testing.T) {
 		Sender:         "REWE",
 		Recipient:      "alex-example",
 		RecipientScope: "personal",
-		DocumentType:   "receipt",
 		Folder:         "Receipts/Groceries",
 	})
 	if err != nil {
@@ -99,7 +97,7 @@ func TestLearningPersistsRecipientCapacityAndConfiguredAliases(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, scope := range []string{"personal", "sole_proprietor"} {
-		if err := store.LearnApproval(t.Context(), Approval{Sender: "merchant", Recipient: "a-example", RecipientScope: scope, DocumentType: "routine-invoice", Folder: "Invoices", Filename: "invoice.pdf"}); err != nil {
+		if err := store.LearnApproval(t.Context(), Approval{Sender: "merchant", Recipient: "a-example", RecipientScope: scope, Folder: "Invoices", Filename: "invoice.pdf"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -117,7 +115,7 @@ func TestLearningPersistsRecipientCapacityAndConfiguredAliases(t *testing.T) {
 		t.Fatalf("expected one configured personal profile and one learned business profile: %+v", profiles)
 	}
 	for _, scope := range []string{"personal", "sole_proprietor", "gbr"} {
-		n, err := store.Queries.ApprovedExampleCount(t.Context(), sqlc.ApprovedExampleCountParams{Sender: "merchant", Recipient: "a-example", RecipientScope: scope, DocumentType: "routine-invoice", Folder: "Invoices"})
+		n, err := store.Queries.ApprovedExampleCount(t.Context(), sqlc.ApprovedExampleCountParams{Sender: "merchant", Recipient: "a-example", RecipientScope: scope, Folder: "Invoices"})
 		if err != nil {
 			t.Fatal(err)
 		}

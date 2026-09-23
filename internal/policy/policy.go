@@ -22,6 +22,9 @@ type Counter interface {
 
 func Evaluate(ctx context.Context, cfg config.Config, queries Counter, c classify.Classification) Decision {
 	reasons := []string{}
+	if c.MetadataNeedsReview {
+		reasons = append(reasons, "unified document metadata needs review")
+	}
 	if c.ModelContextTruncated {
 		reasons = append(reasons, "model context was shortened; review the complete document")
 	}
@@ -39,7 +42,7 @@ func Evaluate(ctx context.Context, cfg config.Config, queries Counter, c classif
 		reasons = append(reasons, "no suggested folder")
 	}
 	if c.Sensitive {
-		reasons = append(reasons, "sensitive document type")
+		reasons = append(reasons, "sensitive document content")
 	}
 	folderKnown := folderConfigured(cfg, c.SuggestedFolder)
 	if !folderKnown && queries != nil && c.SuggestedFolder != "" {
@@ -55,7 +58,6 @@ func Evaluate(ctx context.Context, cfg config.Config, queries Counter, c classif
 			Sender:         c.Sender,
 			Recipient:      c.Recipient,
 			RecipientScope: c.RecipientScope,
-			DocumentType:   c.DocumentType,
 			Folder:         c.SuggestedFolder,
 		})
 		if err != nil && err != sql.ErrNoRows {

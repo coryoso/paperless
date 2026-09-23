@@ -1,11 +1,12 @@
+import { PDFPreview } from "./PageSelection";
 import {
   Archive,
   Check,
   ChevronRight,
   CircleAlert,
   Clock3,
-  FileCheck2,
   FileSearch,
+  FileCheck2,
   Files,
   FolderArchive,
   Inbox,
@@ -22,14 +23,20 @@ import { createRoot } from "react-dom/client";
 import { api } from "./api";
 import { createDashboardLoader, startDashboardRefresh } from "./refresh";
 import {
-  documentTypes,
   recipientScopes,
-  replaceFilenameDocumentType,
   savedRecipientChoice,
-  learnedAlias,
+  splitAddresses,
 } from "./review";
 import { FolderPicker } from "./FolderPicker";
 import { TextPreview } from "./TextPreview";
+import {
+  identityText,
+  localDate,
+  parseAddress,
+  primaryAddress,
+} from "./document-metadata";
+import type { DocumentMetadata } from "./ocr-clusters";
+import type { BlockDocument } from "./ocr-clusters";
 import { SetupGuide } from "./SetupGuide";
 import { SimilarDocuments } from "./SimilarDocuments";
 import { Settings } from "./Settings";
@@ -39,7 +46,6 @@ import type {
   OCRPage,
   ProgressEvent,
   RecipientProfile,
-  TextLayout,
   UploadProgress,
 } from "./types";
 import {
@@ -387,7 +393,6 @@ function App() {
               jobs={dashboard.review_jobs}
               folders={dashboard.folders}
               profiles={dashboard.recipient_profiles || []}
-              paperRecommendations={dashboard.paper_recommendations || {}}
               archiveRoot={dashboard.settings.archive_root}
               selected={
                 selected?.status === "needs_review" ||
@@ -976,7 +981,6 @@ function ReviewWorkspace({
   jobs,
   folders,
   profiles,
-  paperRecommendations,
   archiveRoot,
   selected,
   onSelect,
@@ -986,7 +990,6 @@ function ReviewWorkspace({
   jobs: Job[];
   folders: string[];
   profiles: RecipientProfile[];
-  paperRecommendations: Record<string, string>;
   archiveRoot: string;
   selected: Job | null;
   onSelect: (id: string) => void;
@@ -1010,7 +1013,6 @@ function ReviewWorkspace({
             job={selected}
             folders={folders}
             profiles={profiles}
-            paperRecommendations={paperRecommendations}
             archiveRoot={archiveRoot}
             onChanged={onChanged}
             onReprocess={onReprocess}
@@ -1039,7 +1041,7 @@ function Documents({
 }) {
   const [query, setQuery] = useState("");
   const visible = jobs.filter((job) =>
-    `${job.source_filename} ${job.summary} ${job.classification.summary} ${job.classification.sender} ${job.classification.recipient} ${job.classification.document_type} ${displayName(job.classification.document_type)} ${job.final_path}`
+    `${job.source_filename} ${job.classification.subject} ${job.classification.sender_display} ${job.classification.recipient_display} ${job.summary} ${job.classification.summary} ${job.classification.sender} ${job.classification.recipient} ${job.final_path}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
@@ -1118,26 +1120,18 @@ function JobList({
             <FileSearch />
           </div>
           <div className="job-copy">
-            <strong>
-              {job.classification.summary || job.summary || job.source_filename}
-            </strong>
+            <strong>{job.classification.subject || job.source_filename}</strong>
             <span>
-              {displayName(job.classification.sender) || job.source_filename}
+              {job.classification.sender_display ||
+                displayName(job.classification.sender) ||
+                job.source_filename}
             </span>
-            {showArchiveDetails && (
-              <>
-                <span>
-                  Type:{" "}
-                  {displayName(job.classification.document_type) || "Unknown"}
-                </span>
-                {job.status === "archived" && (
-                  <span title={savedFolder(job.final_path)}>
-                    Archived to:{" "}
-                    {savedFolder(job.final_path, archiveRoot) ||
-                      "Location unavailable"}
-                  </span>
-                )}
-              </>
+            {showArchiveDetails && job.status === "archived" && (
+              <span title={savedFolder(job.final_path)}>
+                Archived to:{" "}
+                {savedFolder(job.final_path, archiveRoot) ||
+                  "Location unavailable"}
+              </span>
             )}
             <small>
               {formatDate(job.updated_at)} · {displayStatus(job.status)}
@@ -1158,7 +1152,6 @@ function JobDetail({
   job,
   folders,
   profiles = [],
-  paperRecommendations = {},
   archiveRoot,
   onChanged,
   review,
@@ -1167,7 +1160,6 @@ function JobDetail({
   job: Job;
   folders: string[];
   profiles?: RecipientProfile[];
-  paperRecommendations?: Record<string, string>;
   archiveRoot: string;
   onChanged: () => Promise<void>;
   review?: boolean;
@@ -1176,15 +1168,37 @@ function JobDetail({
   const classification = job.classification;
   const needsReview = review && job.status === "needs_review";
   const [folder, setFolder] = useState(classification.suggested_folder || "");
-  const [recipient, setRecipient] = useState(classification.recipient || "");
+  const [recipient, setRecipient] = useState(
+    classification.recipient_display || classification.recipient || "",
+  );
+  const [recipientAddresses, setRecipientAddresses] = useState(
+    primaryAddress(classification.metadata?.recipient)?.lines.join("\n") ?? "",
+  );
+  const initialAddress = primaryAddress(classification.metadata?.recipient);
+  const [street, setStreet] = useState(
+    [initialAddress?.street_name, initialAddress?.house_number]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const [postalCode, setPostalCode] = useState(
+    initialAddress?.postal_code ?? "",
+  );
+  const [city, setCity] = useState(initialAddress?.city ?? "");
+  const updateAddress = (
+    streetValue: string,
+    postalValue: string,
+    cityValue: string,
+  ) => {
+    setStreet(streetValue);
+    setPostalCode(postalValue);
+    setCity(cityValue);
+    setRecipientAddresses(`${streetValue}\n${postalValue} ${cityValue}`);
+  };
   const [recipientScope, setRecipientScope] = useState(
     classification.recipient_scope || "unknown",
   );
   const [filename, setFilename] = useState(
     classification.suggested_filename || job.source_filename,
-  );
-  const [documentType, setDocumentType] = useState(
-    classification.document_type || "unknown",
   );
   const [recipientChoice, setRecipientChoice] = useState(() =>
     savedRecipientChoice(classification, profiles),
@@ -1192,28 +1206,82 @@ function JobDetail({
   const selectedRecipient = profiles.find(
     (p) => String(p.id) === recipientChoice,
   );
-  const detectedRecipient =
-    classification.detected_recipient || classification.recipient || "";
-  const alias = learnedAlias(detectedRecipient, selectedRecipient);
-  const paper =
-    paperRecommendations[documentType] ||
-    (documentType === classification.document_type
-      ? classification.physical_original_action
-      : "review") ||
-    "review";
   const [archiveMode, setArchiveMode] = useState<"replace" | "keep_both">(
     "replace",
   );
+  const metadata = useMemo(() => {
+    const base = classification.metadata;
+    if (!base) return undefined;
+    if (selectedRecipient)
+      return {
+        ...base,
+        recipient: {
+          ...base.recipient,
+          names: [selectedRecipient.name],
+          addresses: selectedRecipient.addresses?.length
+            ? (selectedRecipient.addresses ?? []).map(parseAddress)
+            : base.recipient.addresses,
+          primary_address: selectedRecipient.addresses?.length
+            ? 0
+            : base.recipient.primary_address,
+          profile_id: selectedRecipient.id,
+          source_block_ids: [],
+          origin: "profile",
+        },
+      };
+    if (recipientChoice === "new")
+      return {
+        ...base,
+        recipient: {
+          ...base.recipient,
+          names: recipient ? [recipient] : [],
+          addresses: recipientAddresses.trim()
+            ? [
+                {
+                  ...parseAddress(recipientAddresses),
+                  street_name: parseAddress(street).street_name || street,
+                  postal_code: postalCode,
+                  city,
+                },
+              ]
+            : [],
+          primary_address: 0,
+          origin: "review",
+          source_block_ids: [],
+        },
+      };
+    return base;
+  }, [
+    classification.metadata,
+    selectedRecipient,
+    recipientChoice,
+    recipient,
+    recipientAddresses,
+    street,
+    postalCode,
+    city,
+  ]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     const suggestedFolder = classification.suggested_folder || "";
     setFolder(suggestedFolder);
-    setRecipient(classification.recipient || "");
+    setRecipient(
+      classification.recipient_display || classification.recipient || "",
+    );
+    setRecipientAddresses(
+      primaryAddress(classification.metadata?.recipient)?.lines.join("\n") ??
+        "",
+    );
+    const address = primaryAddress(classification.metadata?.recipient);
+    setStreet(
+      [address?.street_name, address?.house_number].filter(Boolean).join(" "),
+    );
+    setPostalCode(address?.postal_code ?? "");
+    setCity(address?.city ?? "");
     setRecipientScope(classification.recipient_scope || "unknown");
     setFilename(classification.suggested_filename || job.source_filename);
-    setDocumentType(classification.document_type || "unknown");
     setRecipientChoice(savedRecipientChoice(classification, profiles));
     setArchiveMode("replace");
     setError("");
@@ -1227,10 +1295,19 @@ function JobDetail({
       await api.approve(job.id, {
         folder,
         filename,
-        document_type: documentType,
         ...(job.final_path ? { archive_mode: archiveMode } : {}),
         ...(recipientChoice === "new"
-          ? { recipient, recipient_scope: recipientScope }
+          ? {
+              recipient,
+              recipient_scope: recipientScope,
+              recipient_addresses: splitAddresses(recipientAddresses),
+              recipient_postal_address: {
+                ...parseAddress(street),
+                street_name: parseAddress(street).street_name || street,
+                postal_code: postalCode,
+                city,
+              },
+            }
           : { recipient_profile_id: Number(recipientChoice) }),
       });
       await onChanged();
@@ -1266,10 +1343,16 @@ function JobDetail({
           <span className="eyebrow">
             {displayStatus(job.status)} · {displayInputKind(job.input_kind)}
           </span>
-          <h2>
-            {classification.summary || job.summary || job.source_filename}
-          </h2>
-          <p>{job.source_filename}</p>
+          <h2>{classification.subject || job.source_filename}</h2>
+          <p className="current-filename">
+            {job.status === "archived"
+              ? job.final_path.split("/").pop() || filename
+              : filename}
+          </p>
+          <details className="original-filename">
+            <summary>Original upload filename</summary>
+            <p>{job.source_filename}</p>
+          </details>
         </div>
         <div className="confidence-ring">
           <strong>{Math.round(job.confidence * 100)}%</strong>
@@ -1289,34 +1372,33 @@ function JobDetail({
           disabled={saving}
         />
       )}
-      <div className="fact-row">
+      <div className="fact-row identity-facts">
         <Fact
           label="Sender"
-          value={displayName(classification.sender) || "Unknown"}
-        />
-        <Fact
-          label={
-            needsReview
-              ? "Recipient"
-              : recipientScopes.find(
-                  (scope) => scope.value === classification.recipient_scope,
-                )?.label || "Recipient"
-          }
-          value={displayName(classification.recipient) || "Not detected"}
-        />
-        <Fact
-          label={needsReview ? "Date" : "Type"}
           value={
-            needsReview
-              ? classification.document_date || "Not detected"
-              : displayName(classification.document_type) || "Unknown"
+            identityText(metadata?.sender) ||
+            classification.sender_display ||
+            displayName(classification.sender) ||
+            "Not extracted"
           }
+        />
+        <Fact
+          label="Recipient"
+          value={
+            identityText(metadata?.recipient) ||
+            classification.recipient_display ||
+            displayName(classification.recipient) ||
+            "Not extracted"
+          }
+        />
+        <Fact
+          label="Date"
+          value={localDate(classification.document_date) || "Not extracted"}
         />
         <Fact label="Pages" value={String(job.page_count || 0)} />
       </div>
     </>
   );
-
   return (
     <article
       className={`document-detail${needsReview ? " review-detail" : ""}`}
@@ -1337,12 +1419,7 @@ function JobDetail({
           </div>
         </section>
       )}
-      {!needsReview && classification.recipient_address && (
-        <p className="learning-note">
-          Detected recipient address:{" "}
-          {classification.recipient_address.replace(/\n/g, ", ")}
-        </p>
-      )}
+
       <div className={needsReview ? "review-body" : undefined}>
         {needsReview && (
           <div className="review-controls">
@@ -1391,7 +1468,9 @@ function JobDetail({
                         }
                       </option>
                     ))}
-                    <option value="new">＋ New recipient…</option>
+                    <option value="new">
+                      Extracted recipient / new profile
+                    </option>
                   </select>
                 </label>
                 {recipientChoice === "new" && (
@@ -1406,7 +1485,7 @@ function JobDetail({
                       />
                     </label>
                     <label>
-                      <span>Addressed to</span>
+                      <span>Capacity</span>
                       <select
                         value={recipientScope}
                         onChange={(event) =>
@@ -1420,33 +1499,75 @@ function JobDetail({
                         ))}
                       </select>
                     </label>
+                    <div className="recipient-address-row">
+                      <label>
+                        <span>Street and number</span>
+                        <input
+                          value={street}
+                          onChange={(e) =>
+                            updateAddress(e.target.value, postalCode, city)
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>Postal code</span>
+                        <input
+                          autoComplete="postal-code"
+                          value={postalCode}
+                          onChange={(e) =>
+                            updateAddress(street, e.target.value, city)
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>City</span>
+                        <input
+                          autoComplete="address-level2"
+                          value={city}
+                          onChange={(e) =>
+                            updateAddress(street, postalCode, e.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+                    {(classification.metadata?.recipient.addresses.length ??
+                      0) > 1 && (
+                      <label className="filename-field">
+                        <span>Use an extracted address</span>
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const a =
+                              classification.metadata?.recipient.addresses[
+                                Number(e.target.value)
+                              ];
+                            if (a)
+                              updateAddress(
+                                [a.street_name, a.house_number]
+                                  .filter(Boolean)
+                                  .join(" "),
+                                a.postal_code ?? "",
+                                a.city ?? "",
+                              );
+                          }}
+                        >
+                          <option value="" disabled>
+                            Choose an alternative…
+                          </option>
+                          {classification.metadata?.recipient.addresses.map(
+                            (a, i) => (
+                              <option key={a.lines.join(" ")} value={i}>
+                                {a.lines.join(", ")}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </label>
+                    )}
                     <p>
                       This recipient will be saved in Settings when you approve.
                     </p>
                   </>
-                )}
-                <details
-                  className="recipient-evidence"
-                  key={`evidence-${job.id}`}
-                >
-                  <summary>Detected recipient details</summary>
-                  <p>
-                    {classification.recipient_evidence
-                      ? `Detected from: “${classification.recipient_evidence}”`
-                      : "Check who the document is addressed to, including their personal or business capacity."}
-                  </p>
-                  {classification.recipient_address && (
-                    <p>
-                      Address:{" "}
-                      {classification.recipient_address.replace(/\n/g, ", ")}
-                    </p>
-                  )}
-                </details>
-                {alias && selectedRecipient && (
-                  <p className="alias-learning">
-                    On approval, “{alias}” will be saved as an alias of{" "}
-                    {selectedRecipient.name}.
-                  </p>
                 )}
               </div>
               <FolderPicker
@@ -1455,46 +1576,13 @@ function JobDetail({
                 value={folder}
                 onChange={setFolder}
               />
-              <label>
-                <span>Document type</span>
-                <select
-                  value={documentType}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setFilename((current) =>
-                      replaceFilenameDocumentType(current, documentType, next),
-                    );
-                    setDocumentType(next);
-                  }}
-                >
-                  {documentTypes.map((value) => (
-                    <option key={value} value={value}>
-                      {displayName(value)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="review-filename">
+              <label className="filename-field">
                 <span>Filename</span>
                 <input
                   value={filename}
                   onChange={(event) => setFilename(event.target.value)}
                 />
               </label>
-              <div className={`paper-recommendation ${paper}`} role="status">
-                <FileCheck2 />
-                <div>
-                  <span>Paper original · Recommendation</span>
-                  <strong>
-                    {paper === "keep_original"
-                      ? "Keep the original"
-                      : paper === "discard_candidate"
-                        ? "May be discarded after checking the scan"
-                        : "Check whether the original is needed"}
-                  </strong>
-                  <p>Based on the document type and your retention policy.</p>
-                </div>
-              </div>
               <div className="resolved-path">
                 <Archive />{" "}
                 <span>
@@ -1561,7 +1649,6 @@ function JobDetail({
                   disabled={
                     !folder.trim() ||
                     !filename.trim() ||
-                    !documentType ||
                     !recipientChoice ||
                     (recipientChoice === "new" && !recipient.trim()) ||
                     (recipientChoice !== "new" && !selectedRecipient) ||
@@ -1588,54 +1675,65 @@ function JobDetail({
             </div>
           </div>
         )}
-        <DocumentPreview job={job} />
+        <DocumentPreview job={job} metadata={metadata} />
       </div>
     </article>
   );
 }
 
-function DocumentPreview({ job }: { job: Job }) {
+function DocumentPreview({
+  job,
+  metadata,
+}: {
+  job: Job;
+  metadata?: DocumentMetadata;
+}) {
   const [mode, setMode] = useState<PreviewMode>("pdf");
-  const [pages, setPages] = useState<OCRPage[]>([]);
-  const [text, setText] = useState("");
-  const [layout, setLayout] = useState<TextLayout | null>(null);
+  const [pages, setPages] = useState<OCRPage[] | null>(null);
+  const [overlayMode, setOverlayMode] = useState<"words" | "clusters">(
+    "clusters",
+  );
+  const [savedBlocks, setSavedBlocks] = useState<BlockDocument | null>(null);
+  const [pagesError, setPagesError] = useState("");
   const [opacity, setOpacity] = useState(45);
   const [error, setError] = useState("");
-
   useEffect(() => {
-    setPages([]);
-    setText("");
-    setLayout(null);
+    const controller = new AbortController();
+    api
+      .documentBlocks(job.id, controller.signal)
+      .then((doc) => {
+        if (!controller.signal.aborted) {
+          setSavedBlocks(doc);
+        }
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(errorMessage(reason));
+      });
+    return () => controller.abort();
+  }, [job.id, job.updated_at]);
+  useEffect(() => {
+    setPages(null);
+    setSavedBlocks(null);
     setError("");
     setMode("pdf");
-  }, [job.id]);
+  }, [job.id, job.updated_at]);
   useEffect(() => {
     let active = true;
-    setError("");
-    if (mode === "overlay" && !pages.length)
+    if (mode === "overlay" && pages === null && job.text_source === "ocr") {
+      setPagesError("");
       api
         .pages(job.id)
         .then((result) => {
           if (active) setPages(result.pages);
         })
         .catch((reason) => {
-          if (active) setError(errorMessage(reason));
+          if (active) setPagesError(errorMessage(reason));
         });
-    if (mode === "text" && !layout)
-      Promise.all([api.layout(job.id), api.text(job.id)])
-        .then(([result, raw]) => {
-          if (active) {
-            setLayout(result);
-            setText(raw);
-          }
-        })
-        .catch((reason) => {
-          if (active) setError(errorMessage(reason));
-        });
+    }
     return () => {
       active = false;
     };
-  }, [job.id, mode, pages.length, layout]);
+  }, [job.id, job.text_source, mode, pages]);
 
   return (
     <section className="preview-section">
@@ -1679,22 +1777,45 @@ function DocumentPreview({ job }: { job: Job }) {
         )}
       </div>
       {error && <div className="inline-error">{error}</div>}
-      {mode === "pdf" && (
-        <iframe
-          title="Searchable PDF"
-          className="pdf-frame"
-          src={job.urls.current}
-        />
+      {pagesError && mode !== "pdf" && (
+        <div className="inline-error">
+          Could not load OCR word positions: {pagesError}
+        </div>
       )}
+      {mode === "overlay" && (
+        <div className="cluster-toolbar">
+          <div className="segmented" role="toolbar" aria-label="Overlay mode">
+            <button
+              type="button"
+              className={overlayMode === "words" ? "active" : ""}
+              onClick={() => setOverlayMode("words")}
+            >
+              Words
+            </button>
+            <button
+              type="button"
+              className={overlayMode === "clusters" ? "active" : ""}
+              onClick={() => setOverlayMode("clusters")}
+            >
+              Bounding boxes
+            </button>
+          </div>
+        </div>
+      )}
+      {mode === "pdf" && <PDFPreview key={job.id + job.updated_at} job={job} />}
       {mode === "text" &&
-        (layout ? (
-          <TextPreview key={job.id} layout={layout} raw={text} />
+        (savedBlocks ? (
+          <TextPreview
+            key={job.id}
+            document={savedBlocks}
+            metadata={metadata}
+          />
         ) : (
           !error && <LoadingState />
         ))}
       {mode === "overlay" && (
         <div className="overlay-stack">
-          {pages.length ? (
+          {pages?.length ? (
             pages.map((page) => (
               <div
                 className="ocr-page"
@@ -1703,25 +1824,69 @@ function DocumentPreview({ job }: { job: Job }) {
               >
                 <img src={page.image_url} alt={`Cleaned page ${page.page}`} />{" "}
                 <div className="box-layer">
-                  {page.boxes.map((box, index) => (
-                    <span
-                      key={index}
-                      title={box.text}
-                      style={{
-                        left: `${(box.left / page.width) * 100}%`,
-                        top: `${(box.top / page.height) * 100}%`,
-                        width: `${(box.width / page.width) * 100}%`,
-                        height: `${(box.height / page.height) * 100}%`,
-                        opacity: opacity / 100,
-                      }}
-                    />
-                  ))}
+                  {(overlayMode === "clusters"
+                    ? (savedBlocks?.blocks ?? [])
+                        .filter(
+                          (block) =>
+                            block.page === page.page &&
+                            block.position &&
+                            block.size,
+                        )
+                        .map((block) => ({
+                          left: block.position?.x ?? 0,
+                          top: block.position?.y ?? 0,
+                          width: block.size?.width ?? 0,
+                          height: block.size?.height ?? 0,
+                          content: block.content,
+                          label: block,
+                        }))
+                    : page.boxes
+                  ).map((box, index) => {
+                    const label = "label" in box ? box.label : undefined;
+                    return (
+                      <span
+                        key={index}
+                        className={
+                          overlayMode === "clusters" ? "cluster-box" : undefined
+                        }
+                        data-block-type={label?.type || undefined}
+                        title={
+                          label
+                            ? `${label.id} · ${label.type || "Unclassified"}${label.representation ? ` · ${label.representation}` : ""}\n${label.content}`
+                            : "content" in box
+                              ? box.content
+                              : box.text
+                        }
+                        style={{
+                          left: `${(box.left / page.width) * 100}%`,
+                          top: `${(box.top / page.height) * 100}%`,
+                          width: `${(box.width / page.width) * 100}%`,
+                          height: `${(box.height / page.height) * 100}%`,
+                          opacity: opacity / 100,
+                        }}
+                      >
+                        {overlayMode === "clusters" && (
+                          <b className="cluster-number">
+                            {label?.id}
+                            {label?.type ? ` · ${label.type}` : ""}
+                            {label?.representation === "table"
+                              ? " · table"
+                              : ""}
+                          </b>
+                        )}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             ))
-          ) : (
+          ) : pages !== null ? (
+            <p className="text-layout-note">
+              No OCR page images or word positions are available.
+            </p>
+          ) : !pagesError ? (
             <LoadingState />
-          )}
+          ) : null}
         </div>
       )}
     </section>

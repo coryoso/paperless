@@ -1,9 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  replaceFilenameDocumentType,
-  usesOtherDirectory,
-  splitAddresses,
-} from "./review";
+import { usesOtherDirectory, splitAddresses } from "./review";
 
 test("keeps postal lines together while separating multiple addresses", () => {
   expect(
@@ -12,26 +8,6 @@ test("keeps postal lines together while separating multiple addresses", () => {
     ),
   ).toEqual(["Musterstraße 12\n12345 Berlin", "Büroweg 3, 54321 Hamburg"]);
   expect(splitAddresses(" \n\n ")).toEqual([]);
-});
-
-test("updates a document type embedded in a review filename", () => {
-  expect(
-    replaceFilenameDocumentType(
-      "2025-06-07__total__tax-letter__fuel.pdf",
-      "tax-letter",
-      "receipt",
-    ),
-  ).toBe("2025-06-07__total__receipt__fuel.pdf");
-});
-
-test("updates a trailing document type", () => {
-  expect(
-    replaceFilenameDocumentType(
-      "2025-06-07__total__receipt.pdf",
-      "receipt",
-      "routine-invoice",
-    ),
-  ).toBe("2025-06-07__total__routine-invoice.pdf");
 });
 
 test("uses the regular folder choice for a known archive folder", () => {

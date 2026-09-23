@@ -36,7 +36,12 @@ func (p *Processor) runOCR(ctx context.Context, input, workDir string, reporter 
 		return ocr.Result{}, err
 	}
 	defer func() { <-p.ocrSlots }()
-	return p.processOCR(ctx, p.cfg, input, workDir, reporter)
+	result, err := p.processOCR(ctx, p.cfg, input, workDir, reporter)
+	if err != nil {
+		return result, err
+	}
+	result.BlockDocument, err = ocr.ReadBlockDocument(workDir, result.TextPath, result.PageCount, 1)
+	return result, err
 }
 
 func (p *Processor) waitForClassification(ctx context.Context, reporter progress.Reporter) error {

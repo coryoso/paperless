@@ -12,7 +12,7 @@ import (
 	"paperless/internal/progress"
 )
 
-func TestDeterministicReceiptClassification(t *testing.T) {
+func TestDeterministicFilingWithoutCategory(t *testing.T) {
 	cfg := config.Default()
 	cfg.LLM.Enabled = false
 	cfg.Policy.KnownFolders = []string{"09 Rechnungen und Belege/Belege"}
@@ -24,88 +24,14 @@ func TestDeterministicReceiptClassification(t *testing.T) {
 		time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC),
 		cfg.Policy.KnownFolders,
 	)
-	if result.DocumentType != "receipt" {
-		t.Fatalf("document type = %q", result.DocumentType)
-	}
 	if result.SuggestedFolder != "09 Rechnungen und Belege/Belege" {
 		t.Fatalf("folder = %q", result.SuggestedFolder)
 	}
-	if result.PhysicalOriginalAction != "discard_candidate" {
+	if result.PhysicalOriginalAction != "review" {
 		t.Fatalf("paper action = %q", result.PhysicalOriginalAction)
 	}
 	if result.DocumentDate != "2026-07-26" {
 		t.Fatalf("date = %q", result.DocumentDate)
-	}
-}
-
-func TestInvoiceTotalsDoNotOverrideExplicitInvoiceType(t *testing.T) {
-	cfg := config.Default()
-	cfg.LLM.Enabled = false
-	for _, text := range []string{
-		"Northstar Office Supplies\nInvoice TEST-2026-0919\nVAT 19%\nTotal due EUR 59.50\nPayment due: 3 October 2026",
-		"Beispiel GmbH\nRechnungsnummer 12345\nMwSt 19%\nSumme EUR 59,50",
-	} {
-		result := Classify(t.Context(), cfg, text, "invoice.pdf", time.Now(), []string{"Invoices"})
-		if result.DocumentType != "routine-invoice" {
-			t.Fatalf("invoice classified as %s: %+v", result.DocumentType, result)
-		}
-	}
-}
-
-func TestReceiptTaxBreakdownDoesNotBecomeTaxLetter(t *testing.T) {
-	cfg := config.Default()
-	cfg.LLM.Enabled = false
-	cfg.Policy.KnownFolders = []string{"09 Rechnungen und Belege/Belege"}
-	result := Classify(
-		t.Context(),
-		cfg,
-		"Total Tankstelle\nBeleg-Nr. 302/002\nGesamtbetrag 15,17 EUR\nNetto 12,75 MwSt 2,42 Brutto 15,17\nSteuernummer DE 296/513/971\nVISA KUNDENBELEG",
-		"scan.pdf",
-		time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC),
-		cfg.Policy.KnownFolders,
-	)
-	if result.DocumentType != "receipt" || result.Sensitive {
-		t.Fatalf("classification = %#v", result)
-	}
-	if result.SuggestedFolder != "09 Rechnungen und Belege/Belege" {
-		t.Fatalf("folder = %q", result.SuggestedFolder)
-	}
-	if result.SuggestedFilename != "2026-08-29__total-tankstelle__receipt.pdf" {
-		t.Fatalf("filename = %q", result.SuggestedFilename)
-	}
-}
-
-func TestMergeDoesNotReplaceStrongReceiptWithTaxLetter(t *testing.T) {
-	cfg := config.Default()
-	cfg.Policy.KnownFolders = []string{"09 Rechnungen und Belege/Belege"}
-	text := "KUNDENBELEG Gesamtbetrag 15,17 EUR MwSt VISA Steuernummer"
-	base := deterministic(cfg, text, "scan.pdf", time.Now(), cfg.Policy.KnownFolders)
-	llm := Classification{DocumentType: "tax-letter", Confidence: .96, SuggestedFolder: "Admin/Tax"}
-	got := merge(base, llm, cfg, text, time.Now(), cfg.Policy.KnownFolders)
-	if got.DocumentType != "receipt" || got.Sensitive {
-		t.Fatalf("classification = %#v", got)
-	}
-	if got.SuggestedFolder != "09 Rechnungen und Belege/Belege" {
-		t.Fatalf("folder = %q", got.SuggestedFolder)
-	}
-}
-
-func TestSensitiveClassificationKeepsOriginal(t *testing.T) {
-	cfg := config.Default()
-	cfg.LLM.Enabled = false
-	result := Classify(
-		t.Context(),
-		cfg,
-		"Allianz Versicherungsschein\nPolice\n01.04.2026",
-		"allianz.pdf",
-		time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC),
-		cfg.Policy.KnownFolders,
-	)
-	if result.PhysicalOriginalAction != "keep_original" {
-		t.Fatalf("paper action = %q", result.PhysicalOriginalAction)
-	}
-	if !result.Sensitive {
-		t.Fatal("expected sensitive document")
 	}
 }
 
@@ -123,9 +49,6 @@ func TestGermanShortDateIsUsedForTaxLetter(t *testing.T) {
 	if result.DocumentDate != "2026-02-25" {
 		t.Fatalf("date = %q", result.DocumentDate)
 	}
-	if result.DocumentType != "tax-letter" {
-		t.Fatalf("document type = %q", result.DocumentType)
-	}
 	if result.SuggestedFolder != "" {
 		t.Fatalf("folder = %q", result.SuggestedFolder)
 	}
@@ -135,11 +58,11 @@ func TestGermanShortDateIsUsedForTaxLetter(t *testing.T) {
 	if result.RecipientType != "person" {
 		t.Fatalf("recipient type = %q", result.RecipientType)
 	}
-	wantFilename := "2026-02-25__finanzamt-musterstadt__tax-letter__tax-letter.pdf"
+	wantFilename := "2026-02-25__finanzamt-musterstadt__document.pdf"
 	if result.SuggestedFilename != wantFilename {
 		t.Fatalf("filename = %q, want %q", result.SuggestedFilename, wantFilename)
 	}
-	if result.PhysicalOriginalAction != "keep_original" {
+	if result.PhysicalOriginalAction != "review" {
 		t.Fatalf("paper action = %q", result.PhysicalOriginalAction)
 	}
 }
@@ -173,10 +96,10 @@ func TestInferSenderRepairsSplitMerchantHeading(t *testing.T) {
 
 func TestMergePrefersCleanBaselineSenderOverEquivalentSplitName(t *testing.T) {
 	cfg := config.Default()
-	base := Classification{DocumentType: "receipt", Sender: "total-tankstelle", DocumentDate: "2025-06-07", SuggestedFolder: "09 Rechnungen und Belege/Belege"}
-	llm := Classification{DocumentType: "receipt", Sender: "total-ta-nkstelle", SuggestedFolder: "Belege", Confidence: .9}
+	base := Classification{Sender: "total-tankstelle", DocumentDate: "2025-06-07", SuggestedFolder: "09 Rechnungen und Belege/Belege"}
+	llm := Classification{Sender: "total-ta-nkstelle", SuggestedFolder: "Belege", Confidence: .9}
 	got := merge(base, llm, cfg, "KUNDENBELEG Gesamtbetrag EUR MwSt VISA 07.06.2025", time.Now(), cfg.Policy.KnownFolders)
-	if got.Sender != "total-tankstelle" || got.SuggestedFilename != "2025-06-07__total-tankstelle__receipt.pdf" {
+	if got.Sender != "total-tankstelle" || got.SuggestedFilename != "2025-06-07__total-tankstelle__document.pdf" {
 		t.Fatalf("classification = %#v", got)
 	}
 }
@@ -242,7 +165,7 @@ func TestClassifyWithOllamaUsesChatEndpointWithThinking(t *testing.T) {
 		cfg.Policy.KnownFolders,
 		base,
 		nil,
-		RoutingExample{Sender: "finanzamt", Recipient: "alex-example", RecipientScope: "personal", DocumentType: "tax-letter", Folder: "Admin/Tax", Filename: "approved-tax-letter.pdf", Approvals: 2},
+		RoutingExample{Sender: "finanzamt", Recipient: "alex-example", RecipientScope: "personal", Folder: "Admin/Tax", Filename: "approved-tax-letter.pdf", Approvals: 2},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -270,7 +193,6 @@ func TestClassifyWithOllamaUsesChatEndpointWithThinking(t *testing.T) {
 		t.Fatalf("keep_alive = %q, %q", reasoningRequest.KeepAlive, structuredRequest.KeepAlive)
 	}
 	schema := requireSchema(t, structuredRequest.Format)
-	requireSchemaEnum(t, schema, "document_type", "tax-letter")
 	requireSchemaEnum(t, schema, "recipient_type", "household")
 	requireSchemaEnum(t, schema, "recipient_scope", "sole_proprietor")
 	requireRequiredField(t, schema, "recipient_evidence")
@@ -316,9 +238,6 @@ func TestOllamaJSONPayloadCanUseThinkingField(t *testing.T) {
 	var result Classification
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatal(err)
-	}
-	if result.DocumentType != "tax-letter" {
-		t.Fatalf("document type = %q", result.DocumentType)
 	}
 }
 
@@ -413,7 +332,9 @@ func TestClassifyWithOllamaStreamsProgress(t *testing.T) {
 
 func TestClassificationJSONSchemaConstrainsFoldersAndFields(t *testing.T) {
 	schema := classificationJSONSchema([]string{"Admin/Tax", "Receipts/General"})
-	requireSchemaEnum(t, schema, "document_type", "receipt")
+	if _, ok := schema["properties"].(map[string]any)["document_type"]; ok {
+		t.Fatal("removed document type remains in schema")
+	}
 	requireSchemaEnum(t, schema, "recipient_type", "company")
 	requireSchemaEnum(t, schema, "suggested_folder", "")
 	requireSchemaEnum(t, schema, "suggested_folder", "Receipts/General")
@@ -432,14 +353,11 @@ func TestClassificationJSONSchemaConstrainsFoldersAndFields(t *testing.T) {
 	}
 }
 
-func TestMergeKeepsSpecificTypeAndRejectsGenericRecipient(t *testing.T) {
+func TestMergeRejectsGenericRecipient(t *testing.T) {
 	cfg := config.Default()
-	base := Classification{DocumentType: "tax-letter", Sender: "finanzamt", DocumentDate: "2026-02-25", SuggestedFolder: "Finanzamt", Sensitive: true}
-	llm := Classification{DocumentType: "letter", Recipient: "Steuerzahler/in", DocumentDate: "2026-02-25", SuggestedFolder: "Finanzamt", Confidence: .95}
+	base := Classification{Sender: "finanzamt", DocumentDate: "2026-02-25", SuggestedFolder: "Finanzamt", Sensitive: true}
+	llm := Classification{Recipient: "Steuerzahler/in", DocumentDate: "2026-02-25", SuggestedFolder: "Finanzamt", Confidence: .95}
 	got := merge(base, llm, cfg, "25.02.26", time.Date(2026, 2, 25, 0, 0, 0, 0, time.UTC), []string{"Finanzamt"})
-	if got.DocumentType != "tax-letter" || !got.Sensitive {
-		t.Fatalf("classification = %#v", got)
-	}
 	if got.Recipient != "" {
 		t.Fatalf("recipient = %q", got.Recipient)
 	}

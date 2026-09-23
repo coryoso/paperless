@@ -15,15 +15,13 @@ FROM routing_examples
 WHERE lower(sender) = lower(?1)
 	AND lower(recipient) = lower(?2)
 	AND recipient_scope = ?3
-	AND document_type = ?4
-	AND folder = ?5
+	AND folder = ?4
 `
 
 type ApprovedExampleCountParams struct {
 	Sender         string `json:"sender"`
 	Recipient      string `json:"recipient"`
 	RecipientScope string `json:"recipient_scope"`
-	DocumentType   string `json:"document_type"`
 	Folder         string `json:"folder"`
 }
 
@@ -32,7 +30,6 @@ func (q *Queries) ApprovedExampleCount(ctx context.Context, arg ApprovedExampleC
 		arg.Sender,
 		arg.Recipient,
 		arg.RecipientScope,
-		arg.DocumentType,
 		arg.Folder,
 	)
 	var count int64
@@ -111,9 +108,9 @@ func (q *Queries) IncrementFolderApproval(ctx context.Context, arg IncrementFold
 
 const insertRoutingExample = `-- name: InsertRoutingExample :exec
 INSERT INTO routing_examples (
-	created_at, source_job_id, sender, recipient, recipient_scope, document_type, folder, filename, weight
+	created_at, source_job_id, sender, recipient, recipient_scope, folder, filename, weight
 ) VALUES (
-	?, ?, ?, ?, ?, ?, ?, ?, ?
+	?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -123,7 +120,6 @@ type InsertRoutingExampleParams struct {
 	Sender         string  `json:"sender"`
 	Recipient      string  `json:"recipient"`
 	RecipientScope string  `json:"recipient_scope"`
-	DocumentType   string  `json:"document_type"`
 	Folder         string  `json:"folder"`
 	Filename       string  `json:"filename"`
 	Weight         float64 `json:"weight"`
@@ -136,7 +132,6 @@ func (q *Queries) InsertRoutingExample(ctx context.Context, arg InsertRoutingExa
 		arg.Sender,
 		arg.Recipient,
 		arg.RecipientScope,
-		arg.DocumentType,
 		arg.Folder,
 		arg.Filename,
 		arg.Weight,
@@ -204,9 +199,9 @@ func (q *Queries) ListFolders(ctx context.Context) ([]string, error) {
 }
 
 const listRoutingExamples = `-- name: ListRoutingExamples :many
-SELECT sender, recipient, recipient_scope, document_type, folder, MAX(filename) AS filename, COUNT(*) AS approvals
+SELECT sender, recipient, recipient_scope, folder, MAX(filename) AS filename, COUNT(*) AS approvals
 FROM routing_examples
-GROUP BY sender, recipient, recipient_scope, document_type, folder
+GROUP BY sender, recipient, recipient_scope, folder
 ORDER BY MAX(id) DESC
 LIMIT 500
 `
@@ -215,7 +210,6 @@ type ListRoutingExamplesRow struct {
 	Sender         string      `json:"sender"`
 	Recipient      string      `json:"recipient"`
 	RecipientScope string      `json:"recipient_scope"`
-	DocumentType   string      `json:"document_type"`
 	Folder         string      `json:"folder"`
 	Filename       interface{} `json:"filename"`
 	Approvals      int64       `json:"approvals"`
@@ -234,7 +228,6 @@ func (q *Queries) ListRoutingExamples(ctx context.Context) ([]ListRoutingExample
 			&i.Sender,
 			&i.Recipient,
 			&i.RecipientScope,
-			&i.DocumentType,
 			&i.Folder,
 			&i.Filename,
 			&i.Approvals,

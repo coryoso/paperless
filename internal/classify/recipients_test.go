@@ -205,14 +205,14 @@ func TestApprovedRoutingIsScopedAndRespectsProfileBoundaries(t *testing.T) {
 	cfg.RecipientProfiles = []config.RecipientProfile{{Name: "Alex Example", Scope: "sole_proprietor", FolderPrefix: "Business"}}
 	text := "Merchant\nHerrn Alex Example\nMusterweg 1\n12345 Berlin\nRechnung 12.03.2026"
 	history := []RoutingExample{
-		{Sender: "merchant", Recipient: "alex-example", RecipientScope: "sole_proprietor", DocumentType: "routine-invoice", Folder: "Business", Approvals: 20},
-		{Sender: "merchant", Recipient: "alex-example", RecipientScope: "personal", DocumentType: "routine-invoice", Folder: "Misc/Alpha", Approvals: 2},
+		{Sender: "merchant", Recipient: "alex-example", RecipientScope: "sole_proprietor", Folder: "Business", Approvals: 20},
+		{Sender: "merchant", Recipient: "alex-example", RecipientScope: "personal", Folder: "Misc/Alpha", Approvals: 2},
 	}
 	c := ClassifyWithHistory(t.Context(), cfg, text, "scan.pdf", time.Now(), []string{"Misc/Alpha", "Business"}, history, nil)
 	if c.SuggestedFolder != "Misc/Alpha" || !strings.Contains(strings.Join(c.Reasons, " "), "learned from approvals") {
 		t.Fatalf("routing=%+v", c)
 	}
-	history = append(history, RoutingExample{Sender: "merchant", Recipient: "alex-example", RecipientScope: "personal", DocumentType: "routine-invoice", Folder: "Misc/Beta", Approvals: 2})
+	history = append(history, RoutingExample{Sender: "merchant", Recipient: "alex-example", RecipientScope: "personal", Folder: "Misc/Beta", Approvals: 2})
 	c = ClassifyWithHistory(t.Context(), cfg, text, "scan.pdf", time.Now(), []string{"Misc/Alpha", "Misc/Beta", "Business"}, history, nil)
 	if c.SuggestedFolder != "" {
 		t.Fatalf("conflicting history must require destination review: %+v", c)
@@ -249,7 +249,7 @@ func TestClassificationSendsLayoutToModelAndGroundsAgainstReadingText(t *testing
 		var request ollamaChatRequest
 		json.NewDecoder(r.Body).Decode(&request)
 		requests = append(requests, request)
-		c := Classification{DocumentType: "routine-invoice", Sender: "Merchant", Recipient: "Alex Example", RecipientType: "person", RecipientScope: "personal", RecipientEvidence: "Alex Example", DocumentDate: "2026-09-06", SuggestedFolder: "Personal", SuggestedFilename: "2026-09-06__merchant__routine-invoice__service.pdf", Summary: "Service invoice", Confidence: .95}
+		c := Classification{Sender: "Merchant", Recipient: "Alex Example", RecipientType: "person", RecipientScope: "personal", RecipientEvidence: "Alex Example", DocumentDate: "2026-09-06", SuggestedFolder: "Personal", SuggestedFilename: "2026-09-06__merchant__routine-invoice__service.pdf", Summary: "Service invoice", Confidence: .95}
 		content, _ := json.Marshal(c)
 		json.NewEncoder(w).Encode(ollamaChatResponse{Message: ollamaMessage{Content: string(content)}})
 	}))
