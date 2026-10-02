@@ -21,6 +21,54 @@ import (
 	"paperless/internal/progress"
 )
 
+func TestDashboardRejectsCrossOriginWritesBeforeHandling(t *testing.T) {
+	// No processor state: rejected requests must never reach a handler.
+	handler := (&Processor{}).handler()
+	for _, route := range []string{
+		"POST /api/jobs/pages/page-selection",
+		"POST /api/jobs/pages/classify-blocks",
+		"POST /api/jobs/pages/approve",
+		"POST /api/jobs/pages/reject",
+		"POST /api/jobs/pages/retry",
+		"POST /api/uploads",
+		"POST /api/folders/refresh",
+		"POST /api/recipients",
+		"PUT /api/recipient-addresses",
+		"POST /api/backups",
+		"POST /api/setup/documents-directory",
+		"POST /api/setup/model",
+		"POST /api/setup/progress",
+		"POST /api/setup/bonsai/install",
+		"POST /api/setup/open-sharing-settings",
+		"POST /api/setup/embeddings",
+		"POST /api/internal/dashboard/notify",
+	} {
+		t.Run(route, func(t *testing.T) {
+			method, path, _ := strings.Cut(route, " ")
+			for _, remote := range []string{"127.0.0.1:1234", "192.168.1.2:1234"} {
+				for _, headers := range []struct{ origin, site string }{
+					{"http://other.example", ""},
+					{"http://paperless.test:9999", ""},
+					{"null", ""},
+					{"", "cross-site"},
+					{"", "same-site"},
+				} {
+					request := httptest.NewRequest(method, "http://paperless.test"+path, strings.NewReader(`{}`))
+					request.RemoteAddr = remote
+					request.Header.Set("Content-Type", "application/json")
+					request.Header.Set("Origin", headers.origin)
+					request.Header.Set("Sec-Fetch-Site", headers.site)
+					response := httptest.NewRecorder()
+					handler.ServeHTTP(response, request)
+					if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "cross-origin") {
+						t.Fatalf("remote=%s headers=%+v: %d %s", remote, headers, response.Code, response.Body.String())
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestUploadCorrelatesProgressWithClientBeforeProcessing(t *testing.T) {
 	p, cleanup, err := newProcessor(t.Context(), testServerConfig(t.TempDir()))
 	if err != nil {

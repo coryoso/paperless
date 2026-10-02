@@ -28,17 +28,31 @@ func TestPageSelectionPersistsAndRejectsInvalidCuts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		body string
-		want int
-	}{{`{"included":[]}`, 400}, {`{"included":[4]}`, 400}, {`{"included":[1,3]}`, 200}} {
-		r := httptest.NewRequest("POST", "/", strings.NewReader(tc.body))
-		r.RemoteAddr = "127.0.0.1:1234"
-		r.SetPathValue("jobID", "pages")
-		w := httptest.NewRecorder()
-		p.handlePageSelection(w, r)
-		if w.Code != tc.want {
-			t.Fatalf("%s: %d %s", tc.body, w.Code, w.Body.String())
-		}
+		name, body, remote, origin, fetchSite string
+		want                                  int
+	}{
+		{"empty", `{"included":[]}`, "192.168.178.50:1234", "http://192.168.178.115:8844", "", 400},
+		{"out of range", `{"included":[4]}`, "192.168.178.50:1234", "http://192.168.178.115:8844", "", 400},
+		{"loopback", `{"included":[1,3]}`, "127.0.0.1:1234", "", "", 200},
+		{"LAN HTTP origin", `{"included":[1,3]}`, "192.168.178.50:1234", "http://192.168.178.115:8844", "", 200},
+		{"LAN fetch metadata", `{"included":[1,3]}`, "192.168.178.50:1234", "", "same-origin", 200},
+		{"different origin", `{"included":[2]}`, "192.168.178.50:1234", "http://other.example", "", 403},
+		{"different port", `{"included":[2]}`, "192.168.178.50:1234", "http://192.168.178.115:9999", "", 403},
+		{"cross-site fetch", `{"included":[2]}`, "192.168.178.50:1234", "", "cross-site", 403},
+		{"cross-origin loopback", `{"included":[2]}`, "127.0.0.1:1234", "http://other.example", "", 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "http://192.168.178.115:8844/api/jobs/pages/page-selection", strings.NewReader(tc.body))
+			r.RemoteAddr = tc.remote
+			r.Header.Set("Origin", tc.origin)
+			r.Header.Set("Sec-Fetch-Site", tc.fetchSite)
+			r.SetPathValue("jobID", "pages")
+			w := httptest.NewRecorder()
+			p.handler().ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("%s: %d %s", tc.body, w.Code, w.Body.String())
+			}
+		})
 	}
 	r := httptest.NewRequest("GET", "/", nil)
 	r.SetPathValue("jobID", "pages")

@@ -3,6 +3,9 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,10 +23,21 @@ func TestDatabaseBackupCreatesRestorableSnapshotInDocumentsRoot(t *testing.T) {
 	if _, err := p.store.Conn().ExecContext(t.Context(), "INSERT INTO jobs (id, source_filename, scan_timestamp, updated_at, status) VALUES ('backup-job', 'scan.pdf', 'now', 'now', 'archived')"); err != nil {
 		t.Fatal(err)
 	}
-	backup, err := p.backupDatabase(t.Context())
-	if err != nil {
+	request := httptest.NewRequest(http.MethodPost, "http://paperless.test/api/backups", nil)
+	request.RemoteAddr = "192.168.1.2:1234"
+	request.Header.Set("Origin", "http://paperless.test")
+	response := httptest.NewRecorder()
+	p.handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("backup: %d %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
+	backup := result.Path
 	if filepath.Dir(backup) != filepath.Join(cfg.Paths.ArchiveRoot, ".paperless-backups") {
 		t.Fatalf("backup path = %q", backup)
 	}

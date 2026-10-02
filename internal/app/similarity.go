@@ -237,10 +237,6 @@ func (p *Processor) handleSimilarDocumentsAPI(w http.ResponseWriter, r *http.Req
 }
 
 func (p *Processor) handleEmbeddingSetupAPI(w http.ResponseWriter, r *http.Request) {
-	if !localRequest(r) {
-		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), 403)
-		return
-	}
 	var input struct {
 		Enabled  bool   `json:"enabled"`
 		Endpoint string `json:"endpoint"`

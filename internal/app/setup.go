@@ -105,7 +105,7 @@ func archiveDirectoryStatus(root string) (bool, string) {
 
 func (p *Processor) handleChooseDocumentsDirectoryAPI(w http.ResponseWriter, r *http.Request) {
 	if !localRequest(r) {
-		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), http.StatusForbidden)
+		writeAPIError(w, errors.New("open Paperless on the Mac running the service to choose a folder; the folder dialog opens on that Mac"), http.StatusForbidden)
 		return
 	}
 	selected, err := p.directoryChooser(r.Context())
@@ -151,10 +151,6 @@ func (p *Processor) requestRestart() {
 }
 
 func (p *Processor) handleModelSetupAPI(w http.ResponseWriter, r *http.Request) {
-	if !localRequest(r) {
-		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), http.StatusForbidden)
-		return
-	}
 	var input struct {
 		Provider string `json:"provider"`
 		Enabled  *bool  `json:"enabled"`
@@ -239,10 +235,6 @@ func setupModelAvailable(ctx context.Context, cfg config.Config) error {
 }
 
 func (p *Processor) handleSetupProgressAPI(w http.ResponseWriter, r *http.Request) {
-	if !localRequest(r) {
-		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), http.StatusForbidden)
-		return
-	}
 	var input struct {
 		Step string `json:"step"`
 	}
@@ -297,10 +289,6 @@ func (p *Processor) handleSetupProgressAPI(w http.ResponseWriter, r *http.Reques
 // Installation streams stage updates while the large model downloads. The
 // provider is saved separately, only after installation and readiness succeed.
 func (p *Processor) handleBonsaiInstallAPI(w http.ResponseWriter, r *http.Request) {
-	if !localRequest(r) {
-		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), http.StatusForbidden)
-		return
-	}
 	// Require JSON so a cross-origin HTML form cannot trigger software installs.
 	if r.Header.Get("Content-Type") != "application/json" {
 		writeAPIError(w, errors.New("installation requires application/json"), http.StatusUnsupportedMediaType)
@@ -359,7 +347,7 @@ func (p *Processor) handleBonsaiInstallAPI(w http.ResponseWriter, r *http.Reques
 
 func (p *Processor) handleOpenSharingSettingsAPI(w http.ResponseWriter, r *http.Request) {
 	if !localRequest(r) {
-		writeAPIError(w, errors.New("setup changes are accepted only from this Mac"), http.StatusForbidden)
+		writeAPIError(w, errors.New("open Paperless on the Mac running the service to open its macOS Sharing settings"), http.StatusForbidden)
 		return
 	}
 	if err := p.sharingSettingsOpener(r.Context()); err != nil {
