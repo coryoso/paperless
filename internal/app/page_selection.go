@@ -77,10 +77,6 @@ func (p *Processor) pageChoices(ctx context.Context, job sqlc.Job) ([]pageChoice
 	return out, nil
 }
 func (p *Processor) handlePageSelection(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost && !localRequest(r) {
-		writeAPIError(w, errors.New("local requests only"), 403)
-		return
-	}
 	p.pagesMu.Lock()
 	defer p.pagesMu.Unlock()
 	job, err := p.store.Queries.GetJob(r.Context(), r.PathValue("jobID"))

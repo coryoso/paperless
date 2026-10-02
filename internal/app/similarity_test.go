@@ -140,9 +140,9 @@ func TestEmbeddingSetupKeepsClassifierAndRejectsRemoteEndpoint(t *testing.T) {
 	defer cleanup()
 	post := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "http://127.0.0.1/api/setup/embeddings", strings.NewReader(body))
-		req.RemoteAddr = "127.0.0.1:4321"
+		req.RemoteAddr = "192.168.1.2:4321"
 		w := httptest.NewRecorder()
-		p.handleEmbeddingSetupAPI(w, req)
+		p.handler().ServeHTTP(w, req)
 		return w
 	}
 	if w := post(`{"enabled":true,"endpoint":"https://example.com","model":"embeddinggemma"}`); w.Code != 400 {
@@ -154,13 +154,6 @@ func TestEmbeddingSetupKeepsClassifierAndRejectsRemoteEndpoint(t *testing.T) {
 	saved, err := config.Load(path)
 	if err != nil || saved.LLM.Provider != "bonsai" || saved.Embeddings.Enabled {
 		t.Fatal(saved, err)
-	}
-	req := httptest.NewRequest("POST", "/api/setup/embeddings", strings.NewReader(`{"enabled":false}`))
-	req.RemoteAddr = "192.0.2.1:4567"
-	w := httptest.NewRecorder()
-	p.handleEmbeddingSetupAPI(w, req)
-	if w.Code != 403 {
-		t.Fatal(w.Code)
 	}
 }
 

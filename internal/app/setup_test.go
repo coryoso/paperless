@@ -68,13 +68,20 @@ func TestChooseDocumentsDirectoryPersistsConfigAndRequestsRestart(t *testing.T) 
 	}
 }
 
-func TestSetupChangesRejectNonLocalRequests(t *testing.T) {
-	p := &Processor{directoryChooser: func(context.Context) (string, error) { return t.TempDir(), nil }}
-	request := httptest.NewRequest(http.MethodPost, "/api/setup/documents-directory", nil)
-	recorder := httptest.NewRecorder()
-	p.handleChooseDocumentsDirectoryAPI(recorder, request)
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+func TestNativeActionsRejectNonLocalRequests(t *testing.T) {
+	p := &Processor{
+		directoryChooser:      func(context.Context) (string, error) { t.Fatal("opened native folder dialog"); return "", nil },
+		sharingSettingsOpener: func(context.Context) error { t.Fatal("opened native settings"); return nil },
+	}
+	for _, path := range []string{"/api/setup/documents-directory", "/api/setup/open-sharing-settings"} {
+		request := httptest.NewRequest(http.MethodPost, "http://paperless.test"+path, nil)
+		request.RemoteAddr = "192.168.1.2:1234"
+		request.Header.Set("Origin", "http://paperless.test")
+		recorder := httptest.NewRecorder()
+		p.handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "Mac running the service") {
+			t.Fatalf("%s: status=%d body=%s", path, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 
@@ -94,9 +101,9 @@ func TestModelSetupPersistsProviderAndRestarts(t *testing.T) {
 	p := &Processor{cfg: config.Default(), configPath: path, restart: make(chan struct{}, 1)}
 	for _, provider := range []string{"fm", "ollama"} {
 		request := httptest.NewRequest(http.MethodPost, "/api/setup/model", strings.NewReader(`{"provider":"`+provider+`"}`))
-		request.RemoteAddr = "127.0.0.1:54321"
+		request.RemoteAddr = "192.168.1.2:54321"
 		recorder := httptest.NewRecorder()
-		p.handleModelSetupAPI(recorder, request)
+		p.handler().ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusAccepted {
 			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
@@ -126,7 +133,7 @@ func TestModelSetupRejectsInvalidOrUnavailableProviderWithoutSaving(t *testing.T
 		{`{"provider":"fm"}`, "127.0.0.1:54321", http.StatusBadRequest},
 		{`{"provider":"unknown"}`, "127.0.0.1:54321", http.StatusBadRequest},
 		{`invalid`, "127.0.0.1:54321", http.StatusBadRequest},
-		{`{"provider":"ollama"}`, "192.168.1.2:54321", http.StatusForbidden},
+		{`{"provider":"unknown"}`, "192.168.1.2:54321", http.StatusBadRequest},
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/api/setup/model", strings.NewReader(tt.body))
 		request.RemoteAddr = tt.remote
@@ -221,10 +228,10 @@ func TestBonsaiInstallationSavesEndpointButLeavesProviderUntilSaved(t *testing.T
 				return "http://127.0.0.1:49152", nil
 			}}
 			r := httptest.NewRequest(http.MethodPost, "/api/setup/bonsai/install", strings.NewReader(`{"install":true}`))
-			r.RemoteAddr = "127.0.0.1:1234"
+			r.RemoteAddr = "192.168.1.2:1234"
 			r.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
-			p.handleBonsaiInstallAPI(w, r)
+			p.handler().ServeHTTP(w, r)
 			if w.Code != 200 || !strings.Contains(w.Body.String(), "Downloading model") {
 				t.Fatalf("response=%s", w.Body.String())
 			}
@@ -252,13 +259,13 @@ func TestBonsaiInstallationSavesEndpointButLeavesProviderUntilSaved(t *testing.T
 	}
 }
 
-func TestBonsaiInstallRejectsRemoteInvalidAndConcurrentRequests(t *testing.T) {
+func TestBonsaiInstallRejectsInvalidAndConcurrentRequests(t *testing.T) {
 	for _, tt := range []struct {
 		name, remote, body, contentType string
 		busy                            bool
 		status                          int
 	}{
-		{"remote", "192.168.1.4:1234", `{"install":true}`, "application/json", false, 403},
+		{"remote busy", "192.168.1.4:1234", `{"install":true}`, "application/json", true, 409},
 		{"form", "127.0.0.1:1234", `{"install":true}`, "text/plain", false, 415},
 		{"invalid", "127.0.0.1:1234", `{}`, "application/json", false, 400},
 		{"busy", "127.0.0.1:1234", `{"install":true}`, "application/json", true, 409},

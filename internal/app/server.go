@@ -204,6 +204,36 @@ func (p *Processor) serve(ctx context.Context) error {
 	similarityDone := make(chan struct{})
 	go func() { defer close(similarityDone); p.processSimilarity(workerCtx) }()
 	defer func() { stopWorkers(); <-similarityDone }()
+
+	server := &http.Server{Addr: addr, Handler: p.handler(), ReadHeaderTimeout: 10 * time.Second}
+	var restarting atomic.Bool
+	shutdownDone := make(chan struct{})
+	go func() {
+		defer close(shutdownDone)
+		select {
+		case <-workerCtx.Done():
+		case <-p.restart:
+			restarting.Store(true)
+		}
+		p.dashboardEvents.close()
+		p.runs.changes.close()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+	slog.Info("dashboard listening", "url", p.cfg.DashboardURL())
+	err = server.Serve(listener)
+	if err == http.ErrServerClosed {
+		<-shutdownDone
+		if restarting.Load() {
+			return errRestartRequested
+		}
+		return nil
+	}
+	return err
+}
+
+func (p *Processor) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/jobs/{jobID}/similar", p.handleSimilarDocumentsAPI)
 	mux.HandleFunc("POST /api/setup/embeddings", p.handleEmbeddingSetupAPI)
@@ -236,32 +266,11 @@ func (p *Processor) serve(ctx context.Context) error {
 	mux.HandleFunc("GET /files/{jobID}/pages/{page}/cleaned", p.handleJobPageImage)
 	mux.HandleFunc("GET /", handleWebAsset)
 
-	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	var restarting atomic.Bool
-	shutdownDone := make(chan struct{})
-	go func() {
-		defer close(shutdownDone)
-		select {
-		case <-workerCtx.Done():
-		case <-p.restart:
-			restarting.Store(true)
-		}
-		p.dashboardEvents.close()
-		p.runs.changes.close()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-	slog.Info("dashboard listening", "url", p.cfg.DashboardURL())
-	err = server.Serve(listener)
-	if err == http.ErrServerClosed {
-		<-shutdownDone
-		if restarting.Load() {
-			return errRestartRequested
-		}
-		return nil
-	}
-	return err
+	protection := http.NewCrossOriginProtection()
+	protection.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeAPIError(w, errors.New("cross-origin requests are not allowed; use the Paperless dashboard"), http.StatusForbidden)
+	}))
+	return protection.Handler(mux)
 }
 
 func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {

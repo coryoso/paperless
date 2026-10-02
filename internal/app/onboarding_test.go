@@ -24,12 +24,16 @@ func TestSetupGuideResumesAndOnlyCompletesAfterModelChoice(t *testing.T) {
 	}
 	documents := t.TempDir()
 	p := &Processor{cfg: cfg, configPath: path, restart: make(chan struct{}, 1), directoryChooser: func(context.Context) (string, error) { return documents, nil }}
-	post := func(handler http.HandlerFunc, body string, status int) {
+	post := func(path, body string, status int) {
 		t.Helper()
-		r := httptest.NewRequest("POST", "/api/setup/test", strings.NewReader(body))
-		r.RemoteAddr = "127.0.0.1:1234"
+		r := httptest.NewRequest("POST", "http://paperless.test"+path, strings.NewReader(body))
+		r.RemoteAddr = "192.168.1.2:1234"
+		if path == "/api/setup/documents-directory" {
+			r.RemoteAddr = "127.0.0.1:1234"
+		}
+		r.Header.Set("Origin", "http://paperless.test")
 		w := httptest.NewRecorder()
-		handler(w, r)
+		p.handler().ServeHTTP(w, r)
 		if w.Code != status {
 			t.Fatalf("status %d: %s", w.Code, w.Body.String())
 		}
@@ -41,8 +45,8 @@ func TestSetupGuideResumesAndOnlyCompletesAfterModelChoice(t *testing.T) {
 			}
 		}
 	}
-	post(p.handleSetupProgressAPI, `{"step":"complete"}`, 409)
-	post(p.handleChooseDocumentsDirectoryAPI, "", 202)
+	post("/api/setup/progress", `{"step":"complete"}`, 409)
+	post("/api/setup/documents-directory", "", 202)
 	saved, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -50,9 +54,9 @@ func TestSetupGuideResumesAndOnlyCompletesAfterModelChoice(t *testing.T) {
 	if saved.SetupStep() != "scanner" || !saved.NeedsSetup() {
 		t.Fatalf("folder prematurely finished guide: %+v", saved.Setup)
 	}
-	post(p.handleSetupProgressAPI, `{"step":"complete"}`, 409)
-	post(p.handleSetupProgressAPI, `{"step":"model"}`, 202)
-	post(p.handleModelSetupAPI, `{"provider":"ollama","enabled":false}`, 202)
+	post("/api/setup/progress", `{"step":"complete"}`, 409)
+	post("/api/setup/progress", `{"step":"model"}`, 202)
+	post("/api/setup/model", `{"provider":"ollama","enabled":false}`, 202)
 	saved, err = config.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +64,7 @@ func TestSetupGuideResumesAndOnlyCompletesAfterModelChoice(t *testing.T) {
 	if saved.SetupStep() != "ready" || !saved.NeedsSetup() || saved.LLM.Enabled {
 		t.Fatalf("model choice=%+v %+v", saved.Setup, saved.LLM)
 	}
-	post(p.handleSetupProgressAPI, `{"step":"complete"}`, 202)
+	post("/api/setup/progress", `{"step":"complete"}`, 202)
 	saved, err = config.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -123,12 +127,12 @@ func TestFinishSetupRechecksFolderAndModel(t *testing.T) {
 	finish()
 }
 
-func TestSetupProgressRejectsRemoteAndUnknownSteps(t *testing.T) {
+func TestSetupProgressRejectsInvalidSteps(t *testing.T) {
 	for _, tt := range []struct {
 		remote, body string
 		status       int
 	}{
-		{"10.0.0.5:1234", `{"step":"complete"}`, 403},
+		{"10.0.0.5:1234", `{"step":"bad"}`, 400},
 		{"127.0.0.1:1234", `{"step":"bad"}`, 400},
 		{"127.0.0.1:1234", `not json`, 400},
 	} {

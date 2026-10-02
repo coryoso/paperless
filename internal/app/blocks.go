@@ -27,10 +27,6 @@ func (p *Processor) handleDocumentBlocksAPI(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, 200, d)
 }
 func (p *Processor) handleClassifyBlocksAPI(w http.ResponseWriter, r *http.Request) {
-	if !localRequest(r) {
-		writeAPIError(w, fmt.Errorf("block classification is accepted only from this Mac"), 403)
-		return
-	}
 	job, err := p.store.Queries.GetJob(r.Context(), r.PathValue("jobID"))
 	if err != nil {
 		http.NotFound(w, r)

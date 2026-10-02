@@ -13,7 +13,7 @@ import (
 	"paperless/internal/db/sqlc"
 )
 
-func TestBlockAPIRejectsRemoteInvalidAndConcurrentRequests(t *testing.T) {
+func TestBlockAPIRejectsInvalidAndConcurrentRequests(t *testing.T) {
 	p, cleanup, err := newProcessor(t.Context(), testServerConfig(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestBlockAPIRejectsRemoteInvalidAndConcurrentRequests(t *testing.T) {
 		addr, body string
 		status     int
 	}{
-		{"192.0.2.1:1234", valid, http.StatusForbidden},
+		{"192.0.2.1:1234", valid, http.StatusConflict},
 		{"127.0.0.1:1234", `{"blocks":[]}`, http.StatusBadRequest},
 		{"127.0.0.1:1234", valid + `{}`, http.StatusBadRequest},
 		{"127.0.0.1:1234", valid, http.StatusConflict},
@@ -38,7 +38,7 @@ func TestBlockAPIRejectsRemoteInvalidAndConcurrentRequests(t *testing.T) {
 		request.RemoteAddr = tt.addr
 		request.SetPathValue("jobID", "blocks")
 		response := httptest.NewRecorder()
-		p.handleClassifyBlocksAPI(response, request)
+		p.handler().ServeHTTP(response, request)
 		if response.Code != tt.status {
 			t.Fatalf("got %d want %d: %s", response.Code, tt.status, response.Body.String())
 		}
@@ -83,11 +83,11 @@ func TestBlockClassificationPersistsAndRejectsStaleInference(t *testing.T) {
 			}))
 			defer server.Close()
 			p.cfg.Bonsai.Endpoint = server.URL
-			request := httptest.NewRequest("POST", "/", strings.NewReader(`{"source_hash":"source","distance_multiplier":1}`))
-			request.RemoteAddr = "127.0.0.1:1234"
+			request := httptest.NewRequest("POST", "/api/jobs/blocks/classify-blocks", strings.NewReader(`{"source_hash":"source","distance_multiplier":1}`))
+			request.RemoteAddr = "192.168.1.2:1234"
 			request.SetPathValue("jobID", "blocks")
 			response := httptest.NewRecorder()
-			p.handleClassifyBlocksAPI(response, request)
+			p.handler().ServeHTTP(response, request)
 			want := 200
 			if stale {
 				want = 409

@@ -108,10 +108,6 @@ func (p *Processor) backupDatabase(ctx context.Context) (string, error) {
 }
 
 func (p *Processor) handleDatabaseBackupAPI(w http.ResponseWriter, r *http.Request) {
-	if !localRequest(r) {
-		writeAPIError(w, errors.New("backups can be started only from this Mac"), http.StatusForbidden)
-		return
-	}
 	path, err := p.backupDatabase(r.Context())
 	if err != nil {
 		writeAPIError(w, err, http.StatusServiceUnavailable)
