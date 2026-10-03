@@ -16,6 +16,23 @@ class Paperless < Formula
     etc.install "config.example.toml" => "paperless.toml"
   end
 
+  post_install_steps do
+    # The new opt symlink is in place before this hook runs. SIGTERM lets the
+    # server shut down normally; KeepAlive starts the newly installed binary.
+    run "/bin/sh", args: ["-eu", "-c", <<~SH]
+      uid="$(/usr/bin/id -u)"
+      for label in sh.brew.paperless homebrew.mxcl.paperless; do
+        for domain in "gui/$uid" "user/$uid"; do
+          service="$domain/$label"
+          if /bin/launchctl print "$service" 2>/dev/null | /usr/bin/grep -q '^[[:space:]]*pid = '; then
+            /bin/launchctl kill SIGTERM "$service"
+            break
+          fi
+        done
+      done
+    SH
+  end
+
   service do
     run [opt_bin/"paperless", "run"]
     run_at_load true

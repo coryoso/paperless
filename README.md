@@ -42,13 +42,17 @@ The guide walks through four steps:
 
 Progress is saved between steps and resumes after a refresh or restart. Inbox processing and uploads stay paused until you finish the guide. Setup reloads work with both `paperless run` / `paperless serve` and background services. Existing configurations with a documents folder keep opening the archive directly; settings remain available from **Setup**.
 
-Upgrade and restart the service after a new stable release with:
+Upgrade after a new stable release with:
 
 ```bash
 brew update
 brew upgrade coryoso/homebrew/paperless
-brew services restart coryoso/homebrew/paperless
 ```
+
+Upgrades automatically restart an existing Homebrew-managed Paperless service
+to load the new version. A stopped service stays stopped. This applies to the
+per-user service started with `brew services start`; foreground runs and the
+separate `paperless service` LaunchAgent are not managed by the Homebrew hook.
 
 ## Usage
 
