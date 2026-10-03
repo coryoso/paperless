@@ -45,15 +45,15 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
+          commit="$(git rev-parse HEAD)"
+          built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           mkdir -p dist
           for arch in arm64 amd64; do
             package="paperless_${version}_darwin_${arch}"
             mkdir -p "dist/${package}"
-            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build \
-              -trimpath \
-              -ldflags="-s -w -X main.version=${version}" \
-              -o "dist/${package}/paperless" \
-              ./cmd/paperless
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" GOFLAGS=-trimpath make build \
+              VERSION="$version" COMMIT="$commit" BUILT_AT="$built_at" \
+              LDFLAGS="-s -w" BINARY="dist/${package}/paperless"
             cp README.md config.example.toml THIRD_PARTY_NOTICES.md "dist/${package}/"
           done
           package="paperless_${version}_darwin_all"
@@ -61,6 +61,12 @@ jobs:
           cp "dist/paperless_${version}_darwin_arm64/paperless" "dist/${package}/paperless-arm64"
           cp "dist/paperless_${version}_darwin_amd64/paperless" "dist/${package}/paperless-amd64"
           cp README.md config.example.toml THIRD_PARTY_NOTICES.md "dist/${package}/"
+
+          # Export the same manifest embedded in both architecture builds.
+          "dist/paperless_${version}_darwin_$(go env GOARCH)/paperless" version --json > dist/build.json
+          for arch in arm64 amd64 all; do
+            cp dist/build.json "dist/paperless_${version}_darwin_${arch}/build.json"
+          done
 
       - name: Sign macOS binaries
         id: signing

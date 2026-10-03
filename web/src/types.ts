@@ -63,6 +63,11 @@ export type SimilarityResult = {
 };
 
 export type Dashboard = {
+  build?: {
+    version: string;
+    commit: string;
+    built_at: string;
+  };
   similarity?: {
     status: string;
     message: string;

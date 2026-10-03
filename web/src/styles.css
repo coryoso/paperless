@@ -90,6 +90,39 @@ svg {
 .brand strong {
   font-size: 19px;
 }
+.build-version {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.build-info {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.build-info h2 {
+  font-size: 16px;
+}
+.build-info dl {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.build-info dl > div {
+  display: flex;
+  gap: 16px;
+}
+.build-info dt {
+  width: 56px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.build-info dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .brand span {
   margin-top: 2px;
   color: var(--muted);

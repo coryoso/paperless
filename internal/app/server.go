@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"paperless/internal/buildinfo"
 	"paperless/internal/classify"
 	"paperless/internal/config"
 	"paperless/internal/db/sqlc"
@@ -61,6 +62,7 @@ type jobURLs struct {
 }
 
 type dashboardResponse struct {
+	Build              buildinfo.Manifest        `json:"build"`
 	Similarity         similarityState           `json:"similarity"`
 	DatabaseBackup     databaseBackupStatus      `json:"database_backup"`
 	Settings           dashboardSettings         `json:"settings"`
@@ -319,6 +321,7 @@ func (p *Processor) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		folders = []string{}
 	}
 	response := dashboardResponse{
+		Build:              buildinfo.Current(),
 		Similarity:         p.similaritySnapshot(),
 		DatabaseBackup:     databaseBackups(p.cfg.Paths.ArchiveRoot),
 		RecipientProfiles:  profiles,

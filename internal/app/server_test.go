@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"paperless/internal/buildinfo"
 	"paperless/internal/classify"
 	"paperless/internal/config"
 	"paperless/internal/db"
@@ -192,6 +193,9 @@ func TestDashboardUsesFoldersFromArchiveRoot(t *testing.T) {
 	}
 	if dashboard.Settings.ArchiveRoot != cfg.Paths.ArchiveRoot || !dashboard.Settings.ArchiveExists {
 		t.Fatalf("settings = %#v", dashboard.Settings)
+	}
+	if dashboard.Build != buildinfo.Current() || dashboard.Build.Version == "" {
+		t.Fatalf("build manifest = %#v", dashboard.Build)
 	}
 }
 

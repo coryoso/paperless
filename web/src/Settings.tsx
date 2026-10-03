@@ -471,6 +471,33 @@ export function Settings({
           {setupError}
         </div>
       )}
+      {!section && dashboard.build && (
+        <section className="build-info" aria-label="About Paperless">
+          <h2>About Paperless</h2>
+          <dl>
+            <div>
+              <dt>Version</dt>
+              <dd>{dashboard.build.version}</dd>
+            </div>
+            <div>
+              <dt>Commit</dt>
+              <dd>{dashboard.build.commit || "Not recorded"}</dd>
+            </div>
+            <div>
+              <dt>Built</dt>
+              <dd>
+                {dashboard.build.built_at ? (
+                  <time dateTime={dashboard.build.built_at}>
+                    {new Date(dashboard.build.built_at).toLocaleString()}
+                  </time>
+                ) : (
+                  "Not recorded"
+                )}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      )}
     </section>
   );
 }
