@@ -28,13 +28,13 @@ export const api = {
       `/api/jobs/${encodeURIComponent(jobID)}/page-selection`,
       { signal },
     ),
-  savePageSelection: (jobID: string, included: number[]) =>
+  savePageSelection: (jobID: string, included: number[], order: number[]) =>
     request<{ pages: PageChoice[] }>(
       `/api/jobs/${encodeURIComponent(jobID)}/page-selection`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ included }),
+        body: JSON.stringify({ included, order }),
       },
     ),
   documentBlocks: (jobID: string, signal: AbortSignal) =>

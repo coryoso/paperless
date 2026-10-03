@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -22,14 +23,15 @@ type pageChoice struct {
 	SuggestedBlank bool   `json:"suggested_blank"`
 	Excluded       bool   `json:"excluded"`
 	Reason         string `json:"reason"`
+	position       int
 }
 
 // Called under pagesMu. The original page numbering is stable across views.
 func (p *Processor) pageChoices(ctx context.Context, job sqlc.Job) ([]pageChoice, error) {
 	out := []pageChoice{}
 	for page := 1; page <= int(job.PageCount); page++ {
-		choice := pageChoice{Page: page}
-		err := p.store.Conn().QueryRowContext(ctx, `SELECT suggested_blank,excluded,reason FROM document_pages WHERE job_id=? AND page=?`, job.ID, page).Scan(&choice.SuggestedBlank, &choice.Excluded, &choice.Reason)
+		choice := pageChoice{Page: page, position: page}
+		err := p.store.Conn().QueryRowContext(ctx, `SELECT suggested_blank,excluded,reason,COALESCE(position,page) FROM document_pages WHERE job_id=? AND page=?`, job.ID, page).Scan(&choice.SuggestedBlank, &choice.Excluded, &choice.Reason, &choice.position)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				return nil, err
@@ -74,6 +76,7 @@ func (p *Processor) pageChoices(ctx context.Context, job sqlc.Job) ([]pageChoice
 			return nil, err
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].position < out[j].position })
 	return out, nil
 }
 func (p *Processor) handlePageSelection(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +103,7 @@ func (p *Processor) handlePageSelection(w http.ResponseWriter, r *http.Request) 
 		}
 		var body struct {
 			Included []int `json:"included"`
+			Order    []int `json:"order"`
 		}
 		if err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil {
 			writeAPIError(w, err, 400)
@@ -107,8 +111,8 @@ func (p *Processor) handlePageSelection(w http.ResponseWriter, r *http.Request) 
 		}
 		keep := map[int]bool{}
 		for _, page := range body.Included {
-			if page < 1 || page > len(choices) {
-				writeAPIError(w, errors.New("invalid page number"), 400)
+			if page < 1 || page > len(choices) || keep[page] {
+				writeAPIError(w, errors.New("invalid or duplicate page number"), 400)
 				return
 			}
 			keep[page] = true
@@ -116,6 +120,24 @@ func (p *Processor) handlePageSelection(w http.ResponseWriter, r *http.Request) 
 		if len(keep) == 0 {
 			writeAPIError(w, errors.New("keep at least one page"), 400)
 			return
+		}
+		if body.Order != nil {
+			positions := make(map[int]int, len(body.Order))
+			for i, page := range body.Order {
+				if page < 1 || page > len(choices) || positions[page] != 0 {
+					writeAPIError(w, errors.New("page order must contain every page exactly once"), 400)
+					return
+				}
+				positions[page] = i + 1
+			}
+			if len(positions) != len(choices) {
+				writeAPIError(w, errors.New("page order must contain every page exactly once"), 400)
+				return
+			}
+			for i := range choices {
+				choices[i].position = positions[choices[i].Page]
+			}
+			sort.SliceStable(choices, func(i, j int) bool { return choices[i].position < choices[j].position })
 		}
 		tx, e := p.store.Conn().BeginTx(r.Context(), nil)
 		if e != nil {
@@ -125,7 +147,7 @@ func (p *Processor) handlePageSelection(w http.ResponseWriter, r *http.Request) 
 		defer tx.Rollback()
 		for i := range choices {
 			choices[i].Excluded = !keep[choices[i].Page]
-			if _, e = tx.ExecContext(r.Context(), `UPDATE document_pages SET excluded=? WHERE job_id=? AND page=?`, choices[i].Excluded, job.ID, choices[i].Page); e != nil {
+			if _, e = tx.ExecContext(r.Context(), `UPDATE document_pages SET excluded=?,position=? WHERE job_id=? AND page=?`, choices[i].Excluded, choices[i].position, job.ID, choices[i].Page); e != nil {
 				writeAPIError(w, e, 500)
 				return
 			}
@@ -143,12 +165,14 @@ func (p *Processor) selectedPDF(ctx context.Context, job sqlc.Job) (string, int,
 		return "", 0, err
 	}
 	keep := []string{}
-	for _, v := range choices {
+	originalOrder := true
+	for i, v := range choices {
+		originalOrder = originalOrder && v.Page == i+1
 		if !v.Excluded {
 			keep = append(keep, strconv.Itoa(v.Page))
 		}
 	}
-	if len(keep) == len(choices) {
+	if len(keep) == len(choices) && originalOrder {
 		return job.CurrentPath, len(keep), nil
 	}
 	dir := filepath.Join(p.cfg.Paths.Processing, job.ID)

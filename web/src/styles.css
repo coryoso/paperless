@@ -2608,9 +2608,32 @@ button:focus-visible {
   line-height: 1.5;
 }
 .page-choices {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
+}
+.page-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.page-choice.excluded label {
+  color: var(--muted);
+}
+.page-order-actions {
+  display: flex;
+  gap: 4px;
+}
+.page-order-actions button {
+  display: inline-flex;
+  padding: 8px;
 }
 .page-choices label,
 .full-pdf-toggle {
