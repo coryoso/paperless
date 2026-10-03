@@ -118,11 +118,11 @@ func TestUploadQueueOverlapsOCRBeforeClassification(t *testing.T) {
 		if err := p.createJob(ctx, id, path, info, state.reporter()); err != nil {
 			t.Fatal(err)
 		}
-		p.uploadQueue <- uploadWork{jobID: id, uploadPath: path, scanTime: info.ModTime(), state: state}
+		p.processingQueue <- processingWork{jobID: id, inputPath: path, scanTime: info.ModTime(), state: state}
 	}
-	close(p.uploadQueue)
+	close(p.processingQueue)
 	done := make(chan struct{})
-	go func() { defer close(done); p.processUploadQueue(ctx) }()
+	go func() { defer close(done); p.processQueue(ctx, p.processingQueue) }()
 	defer func() {
 		cancel()
 		select {

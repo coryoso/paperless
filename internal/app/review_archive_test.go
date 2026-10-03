@@ -32,7 +32,7 @@ func archivedReviewFixture(t *testing.T) (*Processor, string, string, string) {
 	if _, err := p.retryJob(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}
-	runReprocessWork(t, p, <-p.uploadQueue)
+	runReprocessWork(t, p, <-p.processingQueue)
 	job, err := p.store.Queries.GetJob(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
