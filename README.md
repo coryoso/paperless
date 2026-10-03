@@ -354,7 +354,7 @@ make web-dev
 
 SQL migrations live in `internal/db/migrations/`, queries in `internal/db/queries/`, and generated sqlc code in `internal/db/sqlc/`. After changing SQL, run `make sqlc` and `make test`.
 
-The OCR pipeline retains the raw text and searchable PDF separately from the saved block JSON. Formatted text renders saved blocks directly; Markdown is not generated. Uploads use two OCR workers by default; configure `ocr.workers` from 1–8 to change concurrency.
+The OCR pipeline retains the raw text and searchable PDF separately from the saved block JSON. Formatted text renders saved blocks directly; Markdown is not generated. Inbox files and dashboard uploads share a processing queue with two OCR workers by default; configure `ocr.workers` from 1–8 to change concurrency. Classification runs one document at a time while other documents continue OCR. The inbox checks file stability across each batch and keeps discovering new files while queued documents process.
 
 ## Releases and the Homebrew tap
 

@@ -24,7 +24,7 @@ func (p *Processor) retryJob(ctx context.Context, jobID string) (string, error) 
 	}
 	p.processingMu.Lock()
 	defer p.processingMu.Unlock()
-	if len(p.uploadQueue) == cap(p.uploadQueue) {
+	if len(p.processingQueue) == cap(p.processingQueue) {
 		return "", errors.New("processing queue is full; try again shortly")
 	}
 	if attempt := p.activeJobs[jobID]; attempt != nil {
@@ -95,7 +95,7 @@ func (p *Processor) retryJob(ctx context.Context, jobID string) (string, error) 
 	state := p.runs.create(runID)
 	state.publish(progressEvent("prepare", "queued", "Reprocessing queued; results will return to Review.", 6))
 	select {
-	case p.uploadQueue <- uploadWork{jobID: job.ID, uploadPath: inputPath, scanTime: scanTime, state: state, reprocess: true}:
+	case p.processingQueue <- processingWork{jobID: job.ID, inputPath: inputPath, scanTime: scanTime, state: state, reprocess: true}:
 		queued = true
 	default:
 		err := errors.New("processing queue is full; try again shortly")

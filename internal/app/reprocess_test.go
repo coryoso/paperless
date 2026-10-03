@@ -66,9 +66,9 @@ func createReprocessTestJob(t *testing.T, p *Processor, id string) string {
 	return input
 }
 
-func runReprocessWork(t *testing.T, p *Processor, work uploadWork) {
+func runReprocessWork(t *testing.T, p *Processor, work processingWork) {
 	t.Helper()
-	if err := p.processCreatedJob(t.Context(), work.jobID, work.uploadPath, work.scanTime, true, work.reprocess, work.state.reporter()); err != nil {
+	if err := p.processCreatedJob(t.Context(), work.jobID, work.inputPath, work.scanTime, true, work.reprocess, work.state.reporter()); err != nil {
 		t.Fatal(err)
 	}
 	work.state.finish(nil)
@@ -138,7 +138,7 @@ func TestReprocessRestartsExistingDocumentFromEveryStatus(t *testing.T) {
 			if _, err := os.Stat(input); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("superseded inbox input would be ingested again: %v", err)
 			}
-			work := <-p.uploadQueue
+			work := <-p.processingQueue
 			runReprocessWork(t, p, work)
 			job, err := p.store.Queries.GetJob(t.Context(), id)
 			if err != nil {
@@ -188,7 +188,7 @@ func TestReprocessCancelsActiveAttemptBeforeRestart(t *testing.T) {
 		t.Fatal("old attempt did not stop")
 	}
 	p.processOCR = normalOCR
-	runReprocessWork(t, p, <-p.uploadQueue)
+	runReprocessWork(t, p, <-p.processingQueue)
 	job, _ := p.store.Queries.GetJob(t.Context(), "active-1234")
 	if job.Status != StatusNeedsReview || job.Error != "" {
 		t.Fatalf("old attempt overwrote replacement: %+v", job)
@@ -204,7 +204,7 @@ func TestReprocessSupersedesQueuedAttempt(t *testing.T) {
 	if err := p.processCreatedJob(t.Context(), "queued-1234", input, time.Now(), true, false, nil); err == nil {
 		t.Fatal("superseded attempt ran")
 	}
-	runReprocessWork(t, p, <-p.uploadQueue)
+	runReprocessWork(t, p, <-p.processingQueue)
 }
 
 func TestReprocessRejectsMissingSourceWithoutResettingDocument(t *testing.T) {
@@ -218,7 +218,7 @@ func TestReprocessRejectsMissingSourceWithoutResettingDocument(t *testing.T) {
 		t.Fatal("missing source accepted")
 	}
 	after, _ := p.store.Queries.GetJob(t.Context(), "missing-1234")
-	if before != after || len(p.uploadQueue) != 0 {
+	if before != after || len(p.processingQueue) != 0 {
 		t.Fatal("missing source mutated document")
 	}
 }

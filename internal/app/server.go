@@ -118,12 +118,13 @@ type ocrBox struct {
 	Text       string  `json:"text"`
 }
 
-type uploadWork struct {
-	reprocess  bool
-	jobID      string
-	uploadPath string
-	scanTime   time.Time
-	state      *runState
+type processingWork struct {
+	inbox     bool
+	reprocess bool
+	jobID     string
+	inputPath string
+	scanTime  time.Time
+	state     *runState
 }
 
 func serveDashboard(ctx context.Context, cfg config.Config, configPath string) error {
@@ -141,8 +142,15 @@ func runService(ctx context.Context, cfg config.Config, configPath string) error
 		return err
 	}
 	defer cleanup()
+	serviceCtx, stopService := context.WithCancel(ctx)
 	serverErr := make(chan error, 1)
-	go func() { serverErr <- processor.serve(ctx) }()
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		serverErr <- processor.serve(serviceCtx)
+		stopService()
+	}()
+	defer func() { stopService(); <-serverDone }()
 	ticker := time.NewTicker(time.Duration(cfg.Service.PollSeconds) * time.Second)
 	defer ticker.Stop()
 	backupTicker := time.NewTicker(24 * time.Hour)
@@ -172,11 +180,11 @@ func runService(ctx context.Context, cfg config.Config, configPath string) error
 		case <-backupTicker.C:
 			backup()
 		case <-ticker.C:
-			count, err := processor.ProcessInboxOnce(ctx)
+			count, err := processor.queueInboxOnce(serviceCtx, processor.processingQueue)
 			if err != nil {
 				slog.Error("inbox processing failed", "error", err)
 			} else if count > 0 {
-				slog.Info("processed inbox files", "count", count)
+				slog.Info("queued inbox files", "count", count)
 			}
 		}
 	}
@@ -201,7 +209,7 @@ func (p *Processor) serve(ctx context.Context) error {
 	defer p.dashboardEvents.close()
 	defer p.runs.changes.close()
 	workersDone := make(chan struct{})
-	go func() { defer close(workersDone); p.processUploadQueue(workerCtx) }()
+	go func() { defer close(workersDone); p.processQueue(workerCtx, p.processingQueue) }()
 	defer func() { stopWorkers(); <-workersDone }()
 	similarityDone := make(chan struct{})
 	go func() { defer close(similarityDone); p.processSimilarity(workerCtx) }()
@@ -433,7 +441,7 @@ func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	state.publish(progressEvent("upload", "saved", "Upload stored; document processing queued.", 6))
 	select {
-	case p.uploadQueue <- uploadWork{jobID: jobID, uploadPath: uploadPath, scanTime: info.ModTime(), state: state}:
+	case p.processingQueue <- processingWork{jobID: jobID, inputPath: uploadPath, scanTime: info.ModTime(), state: state}:
 	case <-r.Context().Done():
 		writeAPIError(w, r.Context().Err(), http.StatusRequestTimeout)
 		return
@@ -441,29 +449,43 @@ func (p *Processor) handleUploadAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": runID, "job_id": jobID})
 }
 
-func (p *Processor) processUploadQueue(ctx context.Context) {
+func (p *Processor) processQueue(ctx context.Context, queue <-chan processingWork) {
 	var workers sync.WaitGroup
 	// One worker can classify while the others perform bounded OCR work.
 	for i := 0; i < ocrWorkerCount(p.cfg)+1; i++ {
 		workers.Add(1)
-		go func() { defer workers.Done(); p.processUploadWorker(ctx) }()
+		go func() { defer workers.Done(); p.processWorker(ctx, queue) }()
 	}
 	workers.Wait()
 }
 
-func (p *Processor) processUploadWorker(ctx context.Context) {
+func (p *Processor) processWorker(ctx context.Context, queue <-chan processingWork) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case work, ok := <-p.uploadQueue:
+		case work, ok := <-queue:
 			if !ok || ctx.Err() != nil {
 				return
 			}
 			processCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-			processErr := p.processCreatedJob(processCtx, work.jobID, work.uploadPath, work.scanTime, true, work.reprocess, work.state.reporter())
+			var reporter progress.Reporter
+			if work.state != nil {
+				reporter = work.state.reporter()
+			}
+			processErr := p.processCreatedJob(processCtx, work.jobID, work.inputPath, work.scanTime, !work.inbox, work.reprocess, reporter)
 			cancel()
-			work.state.finish(processErr)
+			if work.state != nil {
+				work.state.finish(processErr)
+			}
+			if work.inbox {
+				p.processingMu.Lock()
+				delete(p.inboxPending, work.inputPath)
+				p.processingMu.Unlock()
+				if processErr != nil {
+					slog.Error("inbox processing failed", "path", work.inputPath, "error", processErr)
+				}
+			}
 		}
 	}
 }

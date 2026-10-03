@@ -59,6 +59,7 @@ type Processor struct {
 	blocksMu              sync.Mutex
 	processingMu          sync.Mutex
 	activeJobs            map[string]*processingAttempt
+	inboxPending          map[string]bool
 	similarityMu          sync.RWMutex
 	similarity            similarityState
 	similarityWake        chan struct{}
@@ -69,7 +70,7 @@ type Processor struct {
 	servingDashboard      atomic.Bool
 	dashboardRelayToken   string
 	runs                  *runRegistry
-	uploadQueue           chan uploadWork
+	processingQueue       chan processingWork
 	restart               chan struct{}
 	directoryChooser      func(context.Context) (string, error)
 	sharingSettingsOpener func(context.Context) error
@@ -126,11 +127,12 @@ func newProcessorAtPath(ctx context.Context, cfg config.Config, configPath strin
 	processor := &Processor{
 		cfg:                   cfg,
 		activeJobs:            make(map[string]*processingAttempt),
+		inboxPending:          make(map[string]bool),
 		similarityWake:        make(chan struct{}, 1),
 		configPath:            configPath,
 		store:                 store,
 		runs:                  newRunRegistry(),
-		uploadQueue:           make(chan uploadWork, 128),
+		processingQueue:       make(chan processingWork, 128),
 		restart:               make(chan struct{}, 1),
 		directoryChooser:      chooseDocumentsDirectory,
 		sharingSettingsOpener: openSharingSettings,
@@ -143,31 +145,6 @@ func newProcessorAtPath(ctx context.Context, cfg config.Config, configPath strin
 		return nil, nil, err
 	}
 	return processor, func() { store.Close() }, nil
-}
-
-func (p *Processor) ProcessInboxOnce(ctx context.Context) (int, error) {
-	if p.cfg.NeedsSetup() {
-		return 0, nil
-	}
-	paths, err := p.candidateFiles()
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, path := range paths {
-		stable, err := stableFile(ctx, path, time.Duration(p.cfg.Service.FileStabilitySeconds)*time.Second)
-		if err != nil {
-			return count, err
-		}
-		if !stable {
-			continue
-		}
-		if _, err := p.ProcessFile(ctx, path); err != nil {
-			slog.Error("processing failed", "path", path, "error", err)
-		}
-		count++
-	}
-	return count, nil
 }
 
 func (p *Processor) ProcessFile(ctx context.Context, inboxPath string) (string, error) {
@@ -1037,25 +1014,6 @@ func (p *Processor) archiveDestination(folder, filename string) (string, error) 
 		filename = "scan.pdf"
 	}
 	return filepath.Join(destination, safePDFName(filename)), nil
-}
-
-func stableFile(ctx context.Context, path string, wait time.Duration) (bool, error) {
-	first, err := os.Stat(path)
-	if err != nil {
-		return false, err
-	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false, ctx.Err()
-	case <-timer.C:
-	}
-	second, err := os.Stat(path)
-	if err != nil {
-		return false, err
-	}
-	return first.Size() == second.Size() && first.ModTime().Equal(second.ModTime()), nil
 }
 
 func sha256File(path string) (string, error) {
