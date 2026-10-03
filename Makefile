@@ -1,6 +1,11 @@
 .DEFAULT_GOAL := help
 
 BINARY ?= bin/paperless
+VERSION ?= dev
+COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
+BUILT_AT ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS ?=
+BUILD_LDFLAGS = -X paperless/internal/buildinfo.Version=$(VERSION) -X paperless/internal/buildinfo.Commit=$(COMMIT) -X paperless/internal/buildinfo.BuiltAt=$(BUILT_AT)
 CONFIG ?= $(HOME)/.paperless/config.toml
 MODEL ?= qwen3.5:9b-q4_K_M
 LLM_PROVIDER ?= ollama
@@ -21,7 +26,7 @@ help: ## Show the available commands and optional variables.
 
 build: web-build ## Build the React client and compile the single Paperless binary.
 	@mkdir -p "$(dir $(BINARY))"
-	go build -o "$(BINARY)" ./cmd/paperless
+	go build -ldflags "$(LDFLAGS) $(BUILD_LDFLAGS)" -o "$(BINARY)" ./cmd/paperless
 
 web-install: ## Install the Bun-managed React client dependencies.
 	cd web && bun install --frozen-lockfile

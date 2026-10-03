@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,10 +13,9 @@ import (
 	"syscall"
 
 	"paperless/internal/app"
+	"paperless/internal/buildinfo"
 	"paperless/internal/config"
 )
-
-var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -42,7 +42,15 @@ func run(args []string) error {
 
 	switch command {
 	case "version":
-		fmt.Printf("paperless %s\n", version)
+		fs := flag.NewFlagSet("version", flag.ContinueOnError)
+		asJSON := fs.Bool("json", false, "print the build manifest as JSON")
+		if err := fs.Parse(commandArgs); err != nil {
+			return err
+		}
+		if *asJSON {
+			return json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
+		}
+		fmt.Printf("paperless %s\n", buildinfo.Version)
 		return nil
 	case "configure":
 		fs := flag.NewFlagSet("configure", flag.ContinueOnError)
@@ -230,7 +238,7 @@ func usage() {
 	fmt.Print(`paperless
 
 Usage:
-  paperless version
+  paperless version [--json]
   paperless [--config path] configure [--force] [--base path] [--inbox path] [--archive path] [--state-dir path] [--port number] [--llm-provider ollama|bonsai|fm]
   paperless [--config path] init [--skip-install]
   paperless [--config path] doctor

@@ -276,7 +276,14 @@ function App() {
             <div className="brand">
               <div className="brand-mark">P</div>
               <div>
-                <strong>Paperless</strong>
+                <strong>
+                  Paperless
+                  {dashboard.build && (
+                    <small className="build-version" title="Running version">
+                      {dashboard.build.version}
+                    </small>
+                  )}
+                </strong>
                 <span>Document archive</span>
               </div>
             </div>
