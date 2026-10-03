@@ -221,7 +221,7 @@ func TestPageSelectionWithArchiveReplacement(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			p, id, old, review := archivedReviewFixture(t)
 			toolDir := t.TempDir()
-			script := "#!/bin/sh\n[ \"$4\" = \"1,3\" ] || exit 1\nfor argument do output=$argument; done\nprintf 'selected PDF' > \"$output\"\n"
+			script := "#!/bin/sh\n[ \"$4\" = \"3,1\" ] || exit 1\nfor argument do output=$argument; done\nprintf 'selected PDF' > \"$output\"\n"
 			if err := os.WriteFile(filepath.Join(toolDir, "qpdf"), []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -235,6 +235,9 @@ func TestPageSelectionWithArchiveReplacement(t *testing.T) {
 				}
 			}
 			archiveMode := mode
+			if _, err := p.store.Conn().ExecContext(t.Context(), `UPDATE document_pages SET position=4-page WHERE job_id=?`, id); err != nil {
+				t.Fatal(err)
+			}
 			if mode == "rollback" {
 				archiveMode = "replace"
 				if _, err := p.store.Conn().ExecContext(t.Context(), `CREATE TRIGGER fail_cut_archive BEFORE UPDATE ON jobs WHEN NEW.status='archived' BEGIN SELECT RAISE(FAIL, 'simulated database failure'); END`); err != nil {

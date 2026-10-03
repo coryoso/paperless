@@ -4,6 +4,18 @@ import type { Dashboard } from "./types";
 
 afterEach(() => mock.restore());
 
+it("saves page selection and order together, including excluded page positions", async () => {
+  globalThis.fetch = mock(() =>
+    Promise.resolve(new Response('{"pages":[]}')),
+  ) as unknown as typeof fetch;
+  await api.savePageSelection("test/id", [3, 1], [3, 2, 1]);
+  expect(fetch).toHaveBeenCalledWith("/api/jobs/test%2Fid/page-selection", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ included: [3, 1], order: [3, 2, 1] }),
+  });
+});
+
 it("classifies saved OCR with a multiplier and source revision, without client text or geometry", async () => {
   const controller = new AbortController();
   globalThis.fetch = mock(() =>
